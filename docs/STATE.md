@@ -28,11 +28,10 @@ and (3) a full connectome.
 
 ## The exact next step
 
-Push `main` (ahead of origin; `git log origin/main..main` lists the commits): run `/security-review` on the unpushed diff first, as the
-global rules require. Then record a clip of the goal page and upload it inline like the brag video
-(needs Kevin's go-ahead for the Chrome upload). Still open: set the `CLAUDE_API_KEY` CI secret
-(`gh secret set CLAUDE_API_KEY --repo JamesKevinJones/flyagent`). After that, brainstorm sub-project 2
-(fast System 1 on novel states).
+Free-text goals are merged and pushed (2026-10-05). Next: record a clip of the goal page and upload it
+inline like the brag video (needs Kevin's go-ahead for the Chrome upload); Kevin sets the
+`CLAUDE_API_KEY` CI secret (`gh secret set CLAUDE_API_KEY --repo JamesKevinJones/flyagent`); then
+brainstorm sub-project 2 (fast System 1 on novel states).
 
 Deferred minors from the final review: a malformed Content-Length isn't rejected cleanly; an
 overlong goal can cancel one still being interpreted; no crash guard in the sim thread; LLM reply

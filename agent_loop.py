@@ -355,11 +355,21 @@ def selfcheck():
         sim.step()
     assert "banana" in sim.world.rewarded, sim.world.rewarded
 
-    sim = Sim()                                            # avoid_geosmin_never_touches (the default run touches it)
-    sim.set_goal(parse("avoid the smell")[0])
-    for _ in range(2000):
+    for text, touches in (("", True), ("avoid the smell", False)):   # with the CLI's predator, no goal touches geosmin
+        sim = Sim()
+        if text:
+            sim.set_goal(parse(text)[0])
+        for t in range(2000):
+            if t == 1000:
+                sim.launch_predator()
+            sim.step()
+        assert ("geosmin" in sim.world.rewarded) == touches, (text, sim.world.rewarded)
+
+    sim = Sim()                                            # rest_stays_put
+    sim.set_goal(parse("rest")[0])
+    for _ in range(300):
         sim.step()
-    assert "geosmin" not in sim.world.rewarded, sim.world.rewarded
+    assert float(np.linalg.norm(sim.world.pos)) < 1.0, sim.world.pos
     for s in (sim,):
         s.close()
     print("agent_loop self-check OK")

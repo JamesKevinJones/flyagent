@@ -1,0 +1,37 @@
+== 1. Interpretation accuracy (30 labelled phrases, exact match on seek/avoid/heading/rest)
+group          parser  parser+LLM
+plain            100%        100%
+paraphrased       70%         50%
+messy             50%         60%
+LLM interpretation time: p50 542 ms, p95 705 ms (17 calls)
+parser misses:
+  keep clear of that earthy odour
+  take a break
+  steer clear of the stink and go north
+  I'm starving but that mouldy stink is gross
+  it's late, time to head back to where you started
+  that smell is disgusting, get as far north as you can
+  chill out for a bit
+  please don't move
+parser+LLM misses:
+  get back to the nest  ->  llm: ['home'] / [] / north / rest=False
+  make your way up to the top  ->  llm: ['banana'] / ['geosmin'] / north / rest=False
+  steer clear of the stink and go north  ->  llm: ['banana'] / ['geosmin'] / north / rest=False
+  don't come home  ->  llm: ['banana'] / ['home'] / south / rest=False
+  wander east  ->  llm: ['banana'] / ['geosmin'] / east / rest=False
+  it's late, time to head back to where you started  ->  llm: ['home'] / [] / north / rest=False
+  that smell is disgusting, get as far north as you can  ->  llm: ['banana'] / ['geosmin'] / north / rest=False
+  please don't move  ->  parser: [] / [] / None / rest=False
+  explore toward the north west and ignore smells  ->  llm: ['banana'] / ['geosmin'] / north-west / rest=False
+
+== 2. Goal following (2,000 ticks, wall on, deterministic)
+(no goal: default foraging)              {'reached_banana': True, 'ticks_to_banana': 68, 'min_dist_geosmin': 1.2, 'touched_geosmin': True, 'north_error_deg': 73.4, 'net_move': 32.8, 'final_home_dist': 32.8, 'idle_share': 0.002}
+find the banana                          {'reached_banana': True, 'ticks_to_banana': 68, 'min_dist_geosmin': 2.9, 'touched_geosmin': True, 'north_error_deg': 66.5, 'net_move': 16.8, 'final_home_dist': 16.8, 'idle_share': 0.001}
+avoid the smell                          {'reached_banana': True, 'ticks_to_banana': 315, 'min_dist_geosmin': 23.1, 'touched_geosmin': False, 'north_error_deg': 79.9, 'net_move': 46.7, 'final_home_dist': 46.7, 'idle_share': 0.001}
+head north                               {'reached_banana': False, 'ticks_to_banana': None, 'min_dist_geosmin': 21.4, 'touched_geosmin': False, 'north_error_deg': 14.7, 'net_move': 62.0, 'final_home_dist': 62.0, 'idle_share': 0.001}
+go home (after 300 ticks of foraging)    {'reached_banana': True, 'ticks_to_banana': 0, 'min_dist_geosmin': 12.2, 'touched_geosmin': False, 'north_error_deg': 120.0, 'net_move': 27.3, 'final_home_dist': 4.9, 'idle_share': 0.0}
+rest                                     {'reached_banana': False, 'ticks_to_banana': None, 'min_dist_geosmin': 32.0, 'touched_geosmin': False, 'north_error_deg': 50.9, 'net_move': 45.2, 'final_home_dist': 45.2, 'idle_share': 0.988}
+
+== 3. Serving cost (tick period, ms)
+headless                 {'p50': 15.03, 'p99': 15.781, 'overruns_gt_16ms': 14, 'ticks': 2000}
+server + 1 SSE client    {'p50': 15.027, 'p99': 15.469, 'overruns_gt_16ms': 4, 'ticks': 2000}

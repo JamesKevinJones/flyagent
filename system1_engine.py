@@ -238,7 +238,7 @@ def rules_backend():
         if threat != "none":                                  # no goal overrides a threat
             p, urg, jump = (0.05, 0.85, 0.05, 0.05), (3 if threat == "imminent" else 2), 0.9
         elif state.get("goal_rest", "no") == "yes":
-            p, urg, jump = (0.1, 0.05, 0.05, 0.8), 0, 0.02
+            p, urg, jump = (0.0, 0.0, 0.0, 1.0), 0, 0.02      # pure IDLE: the blended IDLE answer still creeps
         elif "home" in seek.split("+") or ("home" in avoid.split("+") and home_close):
             p, urg, jump = (0.1, 0.05, 0.75, 0.1), 1, 0.05    # ORIENT; the home sign in the brain sets the direction
         elif "banana" in seek.split("+") or state.get("goal_heading", "none") != "none":

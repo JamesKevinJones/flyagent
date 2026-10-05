@@ -61,6 +61,9 @@ class FlyBrain:
         self.kc_familiarity = torch.zeros(n_kc, device=dev)
         self.w_kc_mbon = torch.zeros(n_kc, device=dev)               # signed valence, learned by dopamine
         self.odor_tags = torch.zeros(n_odor_tags, n_kc, device=dev)  # remembered KC codes, row = odor id
+        # goal buffers (set_goal): per-odor approach sign, and [goal heading, heading weight, home sign]
+        self.odor_sign = torch.ones(n_odor_tags, device=dev)
+        self.goal_vec = torch.tensor([0.0, 0.0, 1.0], device=dev)
 
         # ---- CX: wedge angles, attractor kernel, bump state, FB memory ----
         self.theta = torch.arange(n_wedges, device=dev, dtype=f32) * (2 * math.pi / n_wedges)
@@ -141,10 +144,13 @@ class FlyBrain:
         # VNC: blend per-behaviour motor programs by System-1 probabilities
         p = x[IN_P_BEHAVIOUR:IN_P_BEHAVIOUR + 4]
         home_turn = torch.sin(torch.atan2(-dy, -dx) - heading)
+        # goal context: the identified odor's sign (+1 approach, -1 avoid, 0 ignore) and a PFL3-style heading drive
+        odor_sign = torch.where(best.values > 0.6, self.odor_sign.index_select(0, best.indices.reshape(1))[0], 1.0)
+        heading_drive = self.goal_vec[1] * torch.sin(self.goal_vec[0] - heading)
         turns = torch.stack([
-            x[IN_ODOR_LR],                       # FORAGE: bilateral odor comparison, steer up-gradient
+            odor_sign * x[IN_ODOR_LR] + heading_drive,  # FORAGE: bilateral odor comparison, plus goal heading
             -torch.sin(x[IN_LOOM_BEARING]),      # FLEE: turn away from the looming side
-            home_turn,                           # ORIENT: face the path-integrated home vector
+            self.goal_vec[2] * home_turn,        # ORIENT: face (or, with home sign -1, turn from) home
             torch.zeros((), device=self.device),  # IDLE
         ])
         urgency = 0.5 + x[IN_URGENCY]
@@ -191,6 +197,12 @@ class FlyBrain:
         self._done.record()
         self._done.synchronize()
         return self.out
+
+    def set_goal(self, odor_signs, goal_heading, heading_weight, home_sign):
+        """Compile a goal into the brain (host call, outside the graph). Writes in place, so a captured
+        graph reads the new values on its next replay without re-capture."""
+        self.odor_sign.copy_(torch.tensor(odor_signs, dtype=torch.float32))
+        self.goal_vec.copy_(torch.tensor([goal_heading, heading_weight, home_sign], dtype=torch.float32))
 
     def remember_odor(self, odor_id):
         """Store the current KC code as odor `odor_id` (host call, outside the graph)."""
@@ -293,6 +305,46 @@ def demo(device):
     b.inp[IN_P_JUMP] = 1.0
     b.tick()
     assert float(b.out[OUT_JUMP]) == 1.0
+
+    # 6. goal buffers: set outside the graph, read by it every tick (no re-capture)
+    def goal_brain(behaviour):
+        g = FlyBrain(device=device)
+        g.capture()
+        g.inp.zero_()
+        g.inp[IN_P_BEHAVIOUR + BEHAVIOURS.index(behaviour)] = 1.0
+        return g
+
+    g = goal_brain("FORAGE")                              # odor_sign_flips_turn
+    g.inp[IN_ODOR:] = odor_a
+    g.tick()
+    g.remember_odor(3)
+    g.inp[IN_ODOR_LR] = 0.5
+    g.tick()
+    assert float(g.out[OUT_TURN]) > 0, float(g.out[OUT_TURN])
+    signs = [1.0] * g.odor_tags.shape[0]
+    signs[3] = -1.0
+    g.set_goal(signs, 0.0, 0.0, 1.0)
+    g.tick()
+    assert float(g.out[OUT_TURN]) < 0, float(g.out[OUT_TURN])
+
+    g = goal_brain("FORAGE")                              # heading_drive_north: heading 0 = east, no odor
+    g.set_goal([1.0] * 32, math.pi / 2, 0.4, 1.0)
+    g.tick()
+    assert float(g.out[OUT_TURN]) > 0, float(g.out[OUT_TURN])
+    g.set_goal([1.0] * 32, math.pi * 3 / 2, 0.4, 1.0)
+    g.tick()
+    assert float(g.out[OUT_TURN]) < 0, float(g.out[OUT_TURN])
+
+    g = goal_brain("ORIENT")                              # home_sign_flips_orient: walk east, turn north, walk
+    for speed, angvel, n in ((1.0, 0.0, 10), (0.0, math.pi / 8, 4), (1.0, 0.0, 10), (0.0, 0.0, 1)):
+        g.inp[IN_SPEED], g.inp[IN_ANGVEL] = speed, angvel
+        for _ in range(n):
+            g.tick()
+    toward = float(g.out[OUT_TURN])
+    g.set_goal([1.0] * 32, 0.0, 0.0, -1.0)
+    g.tick()
+    away = float(g.out[OUT_TURN])
+    assert abs(toward) > 0.05 and toward * away < 0, (toward, away)
     print(f"[{device}] self-check OK  graph={graph}  heading_err={err:.4f} rad  gyro-bias drift {drift[0.0]:.2f} -> {drift[0.02]:.3f} rad with landmark"
           f"  home_after_square={home:.3f}"
           f"  circuit VRAM={b.vram_mb():.2f} MB")

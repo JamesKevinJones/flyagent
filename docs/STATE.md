@@ -13,7 +13,7 @@ a local Qwen3-4B through `llm` was far more accurate than Laya but 1.7–5 s per
 The README opens with a 21 s brag video, served inline from a GitHub user-attachments URL, with the
 source file in `docs/media/brag.mp4`.
 
-**Free-text goals (sub-project 1 of 3)** are implemented on branch `feat/free-text-goals`:
+**Free-text goals (sub-project 1 of 3)** are merged into `main` (2026-10-05), after a fresh-reviewer pass whose 7 Important findings were fixed:
 - `goals.py` holds the parser and the optional LLM.
 - `Sim.set_goal` compiles goals into the brain buffers and goal-aware rules.
 - `serve.py` + `web/index.html` serve the local page at http://127.0.0.1:8765.
@@ -28,9 +28,15 @@ and (3) a full connectome.
 
 ## The exact next step
 
-Merge `feat/free-text-goals` once its final review passes. Then record a clip of the goal page and
-upload it inline like the brag video (needs Kevin's go-ahead for the Chrome upload). Still open from
-before: set the `CLAUDE_API_KEY` CI secret (`gh secret set CLAUDE_API_KEY --repo JamesKevinJones/flyagent`).
+Push `main` (11 commits ahead of origin): run `/security-review` on the unpushed diff first, as the
+global rules require. Then record a clip of the goal page and upload it inline like the brag video
+(needs Kevin's go-ahead for the Chrome upload). Still open: set the `CLAUDE_API_KEY` CI secret
+(`gh secret set CLAUDE_API_KEY --repo JamesKevinJones/flyagent`). After that, brainstorm sub-project 2
+(fast System 1 on novel states).
+
+Deferred minors from the final review: a malformed Content-Length isn't rejected cleanly; an
+overlong goal can cancel one still being interpreted; no crash guard in the sim thread; LLM reply
+validation is stricter than needed; provider error text can reach the page; `World` only works via `Sim`.
 
 ## Open questions
 

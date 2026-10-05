@@ -182,20 +182,29 @@ LLM_PROMPT = "\n".join([
 ])
 
 
-def llm_backend():
-    """Any OpenAI-compatible chat-completions API, so any provider's key works. Configured by env only:
+def llm_config():
+    """(url, key, model, timeout) for any OpenAI-compatible chat API, from env only; None if unconfigured.
       Gemini   GEMINI_API_KEY                     (base URL and model default to Gemini's; LLM_MODEL overrides)
       others   LLM_BASE_URL, LLM_MODEL, LLM_API_KEY  (OpenAI, Anthropic, Groq, OpenRouter, ...)
-      local    LLM_BASE_URL=http://127.0.0.1:11434/v1 LLM_MODEL=<ollama model>   (no key needed)
-    The reply is untrusted: anything but the expected JSON raises, and the chain falls back to rules."""
+      local    LLM_BASE_URL=http://127.0.0.1:11434/v1 LLM_MODEL=<ollama model>   (no key needed)"""
     env = os.environ
     gemini = not env.get("LLM_BASE_URL") and env.get("GEMINI_API_KEY")
     url = env.get("LLM_BASE_URL") or (GEMINI_OPENAI_URL if gemini else None)
     key = env.get("LLM_API_KEY") or (env.get("GEMINI_API_KEY") if gemini else None)
     model = env.get("LLM_MODEL") or ("gemini-3.8-flash" if gemini else None)
     if not (url and model):
+        return None
+    return url, key, model, float(env.get("LLM_TIMEOUT", "5"))
+
+
+def llm_backend():
+    """System 1 through any OpenAI-compatible chat API (see llm_config for the env vars).
+    The reply is untrusted: anything but the expected JSON raises, and the chain falls back to rules."""
+    config = llm_config()
+    if config is None:
         raise RuntimeError("set GEMINI_API_KEY, or LLM_BASE_URL + LLM_MODEL (+ LLM_API_KEY)")
-    base, post = _poster(url, key, float(env.get("LLM_TIMEOUT", "5")))
+    url, key, model, timeout = config
+    base, post = _poster(url, key, timeout)
 
     def decide(state):
         t0 = time.perf_counter()

@@ -28,7 +28,7 @@ and (3) a full connectome.
 
 ## The exact next step
 
-Push `main` (11 commits ahead of origin): run `/security-review` on the unpushed diff first, as the
+Push `main` (ahead of origin; `git log origin/main..main` lists the commits): run `/security-review` on the unpushed diff first, as the
 global rules require. Then record a clip of the goal page and upload it inline like the brag video
 (needs Kevin's go-ahead for the Chrome upload). Still open: set the `CLAUDE_API_KEY` CI secret
 (`gh secret set CLAUDE_API_KEY --repo JamesKevinJones/flyagent`). After that, brainstorm sub-project 2

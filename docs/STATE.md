@@ -13,20 +13,29 @@ a local Qwen3-4B through `llm` was far more accurate than Laya but 1.7–5 s per
 The README opens with a 21 s brag video, served inline from a GitHub user-attachments URL, with the
 source file in `docs/media/brag.mp4`.
 
+**Free-text goals (sub-project 1 of 3)** are implemented on branch `feat/free-text-goals`:
+- `goals.py` holds the parser and the optional LLM.
+- `Sim.set_goal` compiles goals into the brain buffers and goal-aware rules.
+- `serve.py` + `web/index.html` serve the local page at http://127.0.0.1:8765.
+- `eval_goals.py` produces the README 3e numbers.
+
+Spec and plan are in `docs/superpowers/`. The next sub-projects are (2) fast System 1 on novel states
+and (3) a full connectome.
+
 ## In progress
 
 - Nothing half-done.
 
 ## The exact next step
 
-Set the CI secret so the security-review workflow can run on pull requests (Kevin runs this; never
-paste the key into chat): `gh secret set CLAUDE_API_KEY --repo JamesKevinJones/flyagent`.
-After that, run the hosted-key check: `python eval_system1.py llm --n 120` with `GEMINI_API_KEY` set.
+Merge `feat/free-text-goals` once its final review passes. Then record a clip of the goal page and
+upload it inline like the brag video (needs Kevin's go-ahead for the Chrome upload). Still open from
+before: set the `CLAUDE_API_KEY` CI secret (`gh secret set CLAUDE_API_KEY --repo JamesKevinJones/flyagent`).
 
 ## Open questions
 
-- Is free-text state (goals, operator instructions) planned? That is the only case where Laya or an
-  LLM beats the table. If so, precompute their answers per state (finite space) or keep the GPU warm.
+- LLM goal merging: keep the parser's items and let the LLM only add? That would fix the paraphrase
+  regression in README 3e (70% → 50% with Qwen3-4B).
 - Jev live test: needs a Cloudflare account and token, set in the environment.
 - Gemini / OpenAI / Anthropic through `llm`: only the self-check stub and local Ollama have run.
 

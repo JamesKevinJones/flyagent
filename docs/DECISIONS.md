@@ -18,6 +18,24 @@ used. The prompt is generated from `QUESTIONS`, so Laya and the LLM always see t
 
 ---
 
+## 2026-10-05: Goals are interpreted once and executed by rules and circuit buffers
+
+**Context.** Free-text goals for a portfolio demo (spec: docs/superpowers/specs/2026-10-05-free-text-goals-design.md).
+**Decision.**
+- A built-in parser handles the world's vocabulary, with an optional LLM for leftover words.
+- The goal is compiled into odor signs, a heading drive and a home sign.
+- Goal-aware rules decide every tick.
+- A stdlib server streams over SSE to one static page, local only.
+**Why not an LLM per decision.** It's measured at 3–5 s per decision with a local model, and Laya can't
+read multi-field rules. A goal changes rarely, so interpreting it once costs nothing at tick time.
+**Why not a public link.** A JavaScript port would be a second, unmeasured simulator. A hosted server
+costs money and exposes an LLM key.
+**Consequences.**
+- Goals are limited to the vocabulary.
+- The LLM's answer replaces the parser's, and with a 4B model that hurts paraphrases (README 3e).
+
+---
+
 ## 2026-10-05: Circuits default to the CPU
 
 **Context.** With `rules` as System 1 nothing keeps the GPU busy, and the idle GPU wakes up on every

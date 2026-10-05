@@ -9,6 +9,20 @@ Use `PY="C:/Users/kj638/Kevin codes/ComfyUI/.venv/Scripts/python.exe"` (CUDA tor
 "$PY" system1_engine.py
 ```
 
+## Free-text goals
+
+```bash
+"$PY" goals.py                      # parser, LLM fallback, validation
+"$PY" agent_loop.py --selfcheck     # Sim: matches the CLI, stale answers, wall, goals reached/avoided, rest
+"$PY" serve.py --selfcheck          # server: page, stream, limits, last goal wins, client disconnect
+"$PY" eval_goals.py --selfcheck     # evaluation sanity
+"$PY" eval_goals.py                 # full numbers for README 3e (uses the llm env config if set)
+"$PY" serve.py                      # then open http://127.0.0.1:8765
+```
+
+Regression check: `"$PY" agent_loop.py --ticks 2000 --tick-cpus 2,3 --system1-cpus 4-7` must still print
+`{'FORAGE': 1847, 'FLEE': 25, 'ORIENT': 124, 'IDLE': 4}`, `jumps 22`, `rewards ['banana', 'geosmin']`.
+
 ## Closed loop under System-1 GPU load
 
 ```bash

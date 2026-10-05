@@ -17,7 +17,10 @@ asynchronously in its own process. README.md holds the measured tradeoff matrix 
 
 - `fruit_fly_circuits.py`: `FlyBrain`. Fixed-shape tensor program; `IN_*` / `OUT_*` index the pinned I/O vectors
 - `system1_engine.py`: `describe()` (circuit state to words), backends, worker-process entry points
-- `agent_loop.py`: deadline loop, toy `World`, CPU pinning, stats
+- `agent_loop.py`: `Sim` (one tick of work, goal compilation), toy `World`, the CLI's deadline loop, pinning, stats
+- `goals.py`: `Goal`, the parser, LLM interpretation (`interpret`, `make_llm`)
+- `serve.py` + `web/index.html`: the local goal page (stdlib server, SSE, one static file)
+- `eval_goals.py`, `eval_system1.py`: measurements behind README 3b and 3e
 
 ## Rules
 

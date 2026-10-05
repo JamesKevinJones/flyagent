@@ -10,6 +10,20 @@ https://github.com/user-attachments/assets/818ebc74-1606-427a-9fdf-d18f618ec58a
 and Kenyon-cell frames are real `FlyBrain` output. Music: "Happy Beats / Business Moves Vol. 11" by
 [ende.app](https://ende.app/en) (CC BY 4.0); sound effects by Kenney and unicae_games (CC0).*
 
+## Try it: type a goal, watch the fly pursue it
+
+```bash
+python serve.py                       # then open http://127.0.0.1:8765
+```
+
+Type a goal in plain English: "find the banana", "avoid the smell and head north", "go home", "rest".
+The page shows how the goal was understood (structured goal, parser or LLM, ignored words) next to
+the live arena, compass and behaviour bars. Interpretation runs on a built-in parser and needs no
+model. Set `GEMINI_API_KEY`, or `LLM_BASE_URL` + `LLM_MODEL` (+ `LLM_API_KEY`), to add an LLM on top
+for phrasings the parser can't read. Measured results are in section 3e.
+
+## Self-checks
+
 ```bash
 python fruit_fly_circuits.py          # circuit self-checks, CPU + CUDA
 python system1_engine.py              # state encoding + rules + HTTP client self-checks
@@ -243,6 +257,52 @@ any FLEE answer did. The giant-fiber reflex handled the escape (16 jumps), and t
 (p99 16.1 ms). For this state space, `rules` stays the default. An LLM backend fits slower
 deliberation: route choice, or reading free-text instructions.
 
+### 3e. Free-text goals
+
+A goal is interpreted **once**, when it changes, and then executed every tick by fast rules and circuit
+buffers. The model never sits in the 15 ms loop. `goals.py` maps text onto the world's vocabulary:
+seek banana or home, avoid geosmin or home, a compass heading, or rest. `Sim.set_goal` compiles that into
+three things: a per-odor approach sign, a PFL3-style heading drive on the compass bump, and a home sign.
+The goal fields also join the worded state, so the rule table and its decision cache see them. Numbers
+from `eval_goals.py` (output: `docs/eval-goals-2026-10-05.txt`):
+
+**Interpretation, 30 labelled phrases** (exact match on seek / avoid / heading / rest):
+
+| Phrases | Parser only | Parser + LLM (local Qwen3-4B) |
+|---|---|---|
+| Plain ("avoid the smell and head north") | 100% | 100% |
+| Paraphrased ("keep clear of that earthy odour") | 70% | **50%** |
+| Messy ("I'm starving but that mouldy stink is gross") | 50% | 60% |
+
+LLM interpretation time: p50 542 ms, p95 705 ms with the model warm. The first call loads the model and
+can take over 10 s.
+
+**The local LLM makes paraphrases worse.** It's only asked when the parser leaves words over, and its
+answer replaces the parser's. A 4B model fills fields nobody asked for: "wander east" came back as
+"seek banana, avoid geosmin, head east". A larger hosted model hasn't been measured. Every miss is
+listed in the eval output.
+
+**Goal following** (2,000 headless ticks, arena wall on, the CLI's predator at tick 1,000):
+
+| Goal | Result |
+|---|---|
+| none (default foraging) | reaches banana at tick 68; **touches geosmin** while fleeing the predator |
+| find the banana | reaches banana at tick 68 |
+| avoid the smell | **never touches geosmin** (closest 23.1 units vs 1.2 with no goal) |
+| head north | net movement 14.7° off due north, 62 units, stopped by the wall |
+| go home (after 300 ticks of foraging) | ends 4.9 units from home |
+| rest | IDLE 98.8% of ticks; moves only to flee the predator, as designed |
+
+**Serving cost:** the simulation thread alone ran at tick period p50 15.03 / p99 15.78 ms; with the
+server and a live stream, p50 15.03 / p99 15.47 ms. That's no measurable cost.
+
+**Known limitations:**
+- **Mixed odors:** with both odors present, steering follows whichever odor the mushroom body currently
+  identifies, so the fly can wobble where the plumes overlap.
+- **Map headings:** headings are map directions (landmark frame), not relative to the fly's body.
+- **Vocabulary:** anything outside the vocabulary is shown as ignored, never guessed.
+- **Rest vs threats:** a rest goal still flees threats, because no goal overrides the escape behaviour.
+
 ---
 
 ## 4. Tuning guide for the Nitro V 15
@@ -307,6 +367,10 @@ deliberation: route choice, or reading free-text instructions.
 ---
 
 ## Not done, and what it takes
+
+- **A README clip of the goal page:** record it, then upload it inline like the brag video.
+- **LLM goal merging:** the LLM's answer currently replaces the parser's. Keeping the parser's items and
+  letting the LLM only add to them would fix the paraphrase regression in 3e.
 
 - **Laya is installed project-locally** (`pip install --no-deps --target .deps laya==0.3.27`;
   weights in the Hugging Face cache). Run anything that loads it with `PYTHONPATH=.deps`.

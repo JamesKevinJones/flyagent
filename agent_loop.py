@@ -105,9 +105,15 @@ class World:
         # physics: the VNC's last command moves the body; that self-motion is what the CX integrates
         turn = float(np.clip(turn, -0.35, 0.35))
         self.heading += turn
-        self.pos += fwd * np.array([math.cos(self.heading), math.sin(self.heading)])
-        if self.wall:                                   # clamp, don't reflect: a reflection is a turn the
-            np.clip(self.pos, -WALL, WALL, out=self.pos)  # compass never senses as self-motion
+        step = fwd * np.array([math.cos(self.heading), math.sin(self.heading)])
+        self.pos += step
+        speed = fwd
+        if self.wall and np.abs(self.pos).max() > WALL:   # stop at the wall along the heading: no reflection (a turn
+            before = self.pos - step                       # the compass can't sense) and no sideways slide (a motion
+            room = [(WALL - abs(b)) / abs(d) for b, d in zip(before, step) if abs(b + d) > WALL]   # the odometer can't)
+            frac = max(0.0, min(1.0, min(room)))
+            self.pos = before + frac * step
+            speed = frac * fwd                             # the odometer counts exactly what the body moved
         since = tick - self.loom_start
         self.loom = min(1.0, since / 20) if 0 <= since < 30 else 0.0
         dopamine = 0.0
@@ -121,7 +127,7 @@ class World:
         inp[fc.IN_ANGVEL] = turn + self.gyro_bias
         inp[fc.IN_LANDMARK_HEADING] = math.remainder(self.heading, 2 * math.pi)   # e.g. the sun or a skyline
         inp[fc.IN_LANDMARK_GAIN] = self.landmark_gain
-        inp[fc.IN_SPEED] = fwd
+        inp[fc.IN_SPEED] = speed
         inp[fc.IN_LOOM] = self.loom
         inp[fc.IN_LOOM_BEARING] = self.loom_bearing
         inp[fc.IN_ODOR_LR] = float(np.sum(self.odor_at(left) - self.odor_at(right))) * 5
@@ -348,6 +354,10 @@ def selfcheck():
         snap = sim.step()
         assert math.isfinite(snap["x"]) and math.isfinite(snap["y"]) and max(abs(snap["x"]), abs(snap["y"])) <= 60, snap
     assert snap["y"] > 50, snap["y"]                       # it actually went north
+    sim.set_goal(parse("go home")[0])                      # home_after_wall: the odometer must not count
+    for _ in range(2000):                                  # steps the wall stopped (final review)
+        sim.step()
+    assert float(np.linalg.norm(sim.world.pos)) < 10, sim.world.pos
 
     sim = Sim()                                            # seek_banana_reaches
     sim.set_goal(parse("find the banana")[0])

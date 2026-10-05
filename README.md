@@ -274,7 +274,7 @@ from `eval_goals.py` (output: `docs/eval-goals-2026-10-05.txt`):
 | Paraphrased ("keep clear of that earthy odour") | 70% | **50%** |
 | Messy ("I'm starving but that mouldy stink is gross") | 50% | 60% |
 
-LLM interpretation time: p50 542 ms, p95 705 ms with the model warm. The first call loads the model and
+LLM interpretation time: p50 480 ms, p95 609 ms with the model warm. The first call loads the model and
 can take over 10 s.
 
 **The local LLM makes paraphrases worse.** It's only asked when the parser leaves words over, and its
@@ -289,12 +289,13 @@ listed in the eval output.
 | none (default foraging) | reaches banana at tick 68; **touches geosmin** while fleeing the predator |
 | find the banana | reaches banana at tick 68 |
 | avoid the smell | **never touches geosmin** (closest 23.1 units vs 1.2 with no goal) |
-| head north | net movement 14.7° off due north, 62 units, stopped by the wall |
+| head north | net movement 1.1° off due north, 60 units, stopped at the wall |
 | go home (after 300 ticks of foraging) | ends 4.9 units from home |
 | rest | IDLE 98.8% of ticks; moves only to flee the predator, as designed |
 
-**Serving cost:** the simulation thread alone ran at tick period p50 15.03 / p99 15.78 ms; with the
-server and a live stream, p50 15.03 / p99 15.47 ms. That's no measurable cost.
+**Serving cost:** the simulation thread alone ran at tick period p50 15.01 / p99 15.41 ms; with the
+server and a live stream, p50 15.01 / p99 15.40 ms, with no ticks over 16 ms in either run. That's no
+measurable cost.
 
 **Known limitations:**
 - **Mixed odors:** with both odors present, steering follows whichever odor the mushroom body currently

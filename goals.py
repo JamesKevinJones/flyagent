@@ -5,6 +5,7 @@ The goal is interpreted once, when it changes; fast rules and circuit buffers ex
 import json
 import math
 import re
+import threading
 import time
 from typing import NamedTuple
 
@@ -74,7 +75,8 @@ STOP = {"i", "i'm", "im", "the", "a", "an", "to", "of", "that", "this", "is", "i
 
 
 def _tokens(text):
-    words = re.sub(r"[^a-z0-9'\s]", " ", text.lower().replace("-", " ")).split()
+    text = text.lower().replace("’", "'").replace("‘", "'").replace("-", " ")   # curly quotes: iOS/macOS
+    words = re.sub(r"[^a-z0-9'\s]", " ", text).split()
     out, i = [], 0
     while i < len(words):
         for n in (4, 3, 2):                                   # longest phrase first
@@ -100,16 +102,20 @@ def parse(text):
     heading, rest = None, False
     mode, negated = "seek", False                             # a bare noun ("banana!") means seek
     for tok in _tokens(text) + [","]:
-        if tok in ("and", "but", ","):
+        if tok in ("but", ","):
             mode, negated = "seek", False
+        elif tok == "and":                                    # "avoid X and Y": the verb carries over, a negation doesn't
+            negated = False
         elif tok in NEGATIONS:
             mode, negated = "avoid", True
         elif tok in AVOID_VERBS:
             mode = "avoid"
         elif tok in SEEK_VERBS:
             mode = "avoid" if negated else "seek"
-            if tok == "eat":
-                (avoid if negated else seek).append("banana")
+            if tok == "eat" and negated:                      # "don't eat": banana can't be avoided in this world
+                ignored.append("eat")
+            elif tok == "eat":
+                seek.append("banana")
                 asked[mode].add("banana")
         elif tok in REST_VERBS:
             rest = rest or not negated
@@ -123,7 +129,10 @@ def parse(text):
             else:
                 ignored.append(tok)                           # e.g. "avoid the banana": not in this world's vocabulary
         elif tok in DIRECTIONS:
-            heading = DIRECTIONS[tok]
+            if negated:                                       # "don't go north": there's no "avoid a heading"
+                ignored.append(tok)
+            else:
+                heading = DIRECTIONS[tok]
         elif tok not in STOP and not tok.isdigit():
             ignored.append(tok)
     seek, avoid = list(dict.fromkeys(seek)), list(dict.fromkeys(avoid))
@@ -195,11 +204,13 @@ def make_llm():
         return None
     url, key, model, timeout = config
     base, post = system1_engine._poster(url, key, timeout)
+    lock = threading.Lock()                                   # one persistent connection: one request at a time
 
     def ask(text):
-        body = post(base + "/chat/completions", {
-            "model": model, "temperature": 0, "response_format": {"type": "json_object"},
-            "messages": [{"role": "system", "content": LLM_GOAL_PROMPT}, {"role": "user", "content": text}]})
+        with lock:
+            body = post(base + "/chat/completions", {
+                "model": model, "temperature": 0, "response_format": {"type": "json_object"},
+                "messages": [{"role": "system", "content": LLM_GOAL_PROMPT}, {"role": "user", "content": text}]})
         return body["choices"][0]["message"]["content"]
     return ask
 
@@ -230,6 +241,17 @@ if __name__ == "__main__":
     assert parse("find the banana but avoid the banana")[1] == ("banana",)
     assert parse("I'm starving")[1] == ("starving",)
     assert parse("find the banana and a home")[1] == ()                  # stop-words never reported
+    # negation and conjunction (final review): never invalid, never inverted
+    for text, want in [("don't eat", ((), (), None, False)),
+                       ("don’t go home", ((), ("home",), None, False)),   # curly apostrophe (iOS/macOS)
+                       ("don't go north", ((), (), None, False)),
+                       ("go north, not south", ((), (), "north", False)),
+                       ("avoid the smell and the mould", ((), ("geosmin",), None, False)),
+                       ("avoid home and the smell", ((), ("home", "geosmin"), None, False)),
+                       ("don't go home and find food", (("banana",), ("home",), None, False))]:
+        got = parse(text)
+        assert core(got[0]) == want and validate(got[0]) is None, (text, core(got[0]), got[1])
+    assert "eat" in parse("don't eat")[1] and "south" in parse("go north, not south")[1]
 
     def never(text):
         raise AssertionError("llm called for fully parsed text")
@@ -267,4 +289,37 @@ if __name__ == "__main__":
     assert make_llm() is None
     os.environ.update(LLM_BASE_URL="http://127.0.0.1:9/v1", LLM_MODEL="m")   # nothing listens; construction is offline
     assert callable(make_llm())
+
+    # concurrent interpretations share one LLM client: both must succeed (final review)
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    class SlowLLM(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def do_POST(self):
+            self.rfile.read(int(self.headers["Content-Length"]))
+            time.sleep(0.3)
+            content = '{"seek": ["home"], "avoid": [], "heading": null, "rest": false}'
+            body = json.dumps({"choices": [{"message": {"content": content}}]}).encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *a):
+            pass
+
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), SlowLLM)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    os.environ.update(LLM_BASE_URL=f"http://127.0.0.1:{srv.server_port}/v1", LLM_MODEL="m")
+    ask, results = make_llm(), []
+    threads = [threading.Thread(target=lambda: results.append(interpret("back to the nest please", ask)))
+               for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert [r.goal.source for r in results] == ["llm", "llm"], [r.note for r in results]
+    srv.shutdown()
     print("goals self-check OK")

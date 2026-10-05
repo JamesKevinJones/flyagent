@@ -89,7 +89,14 @@ def make_server(sim, port=8765, llm=None, runner=None):
             self.end_headers()
             self.wfile.write(body)
 
+        def _host_ok(self):
+            """Only this server's own names: a foreign Host header is DNS rebinding."""
+            port = self.server.server_address[1]
+            return self.headers.get("Host", "") in (f"127.0.0.1:{port}", f"localhost:{port}")
+
         def do_GET(self):
+            if not self._host_ok():
+                return self._send(403, b'{"error": "forbidden host"}')
             if self.path in STATIC:
                 name, ctype = STATIC[self.path]
                 with open(os.path.join(WEB, name), "rb") as f:
@@ -119,6 +126,12 @@ def make_server(sim, port=8765, llm=None, runner=None):
                 pass                                    # the tab closed; the simulation carries on
 
         def do_POST(self):
+            if not self._host_ok():
+                self.close_connection = True
+                return self._send(403, b'{"error": "forbidden host"}')
+            if not self.headers.get("Content-Type", "").startswith("application/json"):
+                self.close_connection = True              # other sites can only send simple (non-JSON) POSTs
+                return self._send(415, b'{"error": "send application/json"}')
             length = int(self.headers.get("Content-Length") or 0)
             if length > MAX_BODY:
                 self.close_connection = True
@@ -214,7 +227,7 @@ def selfcheck():
 
     def request(method, path, body=None, headers=None):
         c = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
-        c.request(method, path, body, headers or {})
+        c.request(method, path, body, {"Content-Type": "application/json", **(headers or {})})
         r = c.getresponse()
         data = r.read()
         c.close()
@@ -245,6 +258,17 @@ def selfcheck():
     assert request("POST", "/goal", "{not json")[0] == 400
     assert request("GET", "/../goals.py")[0] == 404
     assert request("POST", "/predator")[0] == 204
+    # other websites can't drive the local server (final review): a simple cross-origin POST has to use a
+    # non-JSON Content-Type, and DNS rebinding arrives with a foreign Host header
+    time.sleep(0.1)                                     # let earlier queued commands land first
+    goal_before = sim.goal
+    assert request("POST", "/goal", json.dumps({"text": "go home"}), {"Content-Type": "text/plain"})[0] == 415
+    assert request("POST", "/reset", None, {"Content-Type": "text/plain"})[0] == 415
+    assert request("GET", "/stream", None, {"Host": "evil.example"})[0] == 403
+    assert request("POST", "/goal", json.dumps({"text": "go home"}), {"Host": "evil.example:8765"})[0] == 403
+    assert request("GET", "/", None, {"Host": f"localhost:{port}"})[0] == 200
+    time.sleep(0.1)
+    assert sim.goal == goal_before, sim.goal
 
     replies = {}                                        # last_goal_wins: a slow LLM answer must not override
     first = threading.Thread(target=lambda: replies.update(a=request("POST", "/goal",

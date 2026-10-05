@@ -13,7 +13,7 @@ and Kenyon-cell frames are real `FlyBrain` output. Music: "Happy Beats / Busines
 ## Try it: type a goal, watch the fly pursue it
 
 ```bash
-python -m venv .venv                  # Windows: .venv\Scriptsctivate   macOS/Linux: source .venv/bin/activate
+python -m venv .venv                  # Windows: .venv\Scripts\activate   macOS/Linux: source .venv/bin/activate
 pip install torch --index-url https://download.pytorch.org/whl/cpu   # CPU build is enough for the demo
 pip install -r requirements.txt
 python serve.py                       # then open http://127.0.0.1:8765

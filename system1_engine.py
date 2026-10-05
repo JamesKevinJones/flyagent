@@ -18,6 +18,7 @@ import time
 import urllib.parse
 from typing import NamedTuple
 
+from goals import AVOIDABLE, DEFAULT_GOAL, SEEKABLE
 from fruit_fly_circuits import (BEHAVIOURS, OUT_FWD, OUT_HEADING, OUT_HOME_X, OUT_HOME_Y, OUT_KC_ACTIVE,
                                 OUT_NOVELTY, OUT_ODOR_ID, OUT_ODOR_MATCH, OUT_VALENCE)
 
@@ -52,7 +53,7 @@ class Decision(NamedTuple):
 _DIRS = ["ahead", "ahead-left", "left", "behind-left", "behind", "behind-right", "right", "ahead-right"]
 
 
-def describe(out, loom, odor_names):
+def describe(out, loom, odor_names, goal=DEFAULT_GOAL):
     """Quantise the brain's output vector into a short word-valued state.
 
     Laya and Jev are text models that are weak at arithmetic and angle comparison, so they get
@@ -77,6 +78,11 @@ def describe(out, loom, odor_names):
         "home": "here" if dist < 3 else f"{_DIRS[round(rel / (math.pi / 4)) % 8]}, "
                                         f"{'near' if dist < 30 else 'far'}",
         "moving": "yes" if out[OUT_FWD] > 0.05 else "no",
+        # the goal rides along in the state, so the decision cache is keyed per goal for free
+        "goal_seek": "+".join(i for i in SEEKABLE if i in goal.seek) or "none",
+        "goal_avoid": "+".join(i for i in AVOIDABLE if i in goal.avoid) or "none",
+        "goal_heading": goal.heading or "none",
+        "goal_rest": "yes" if goal.rest else "no",
     }
 
 
@@ -227,8 +233,16 @@ def rules_backend():
     def decide(state):
         t0 = time.perf_counter()
         threat = state["threat"]
-        if threat != "none":
+        seek, avoid = state.get("goal_seek", "none"), state.get("goal_avoid", "none")
+        home_close = state["home"] == "here" or state["home"].endswith("near")
+        if threat != "none":                                  # no goal overrides a threat
             p, urg, jump = (0.05, 0.85, 0.05, 0.05), (3 if threat == "imminent" else 2), 0.9
+        elif state.get("goal_rest", "no") == "yes":
+            p, urg, jump = (0.1, 0.05, 0.05, 0.8), 0, 0.02
+        elif "home" in seek.split("+") or ("home" in avoid.split("+") and home_close):
+            p, urg, jump = (0.1, 0.05, 0.75, 0.1), 1, 0.05    # ORIENT; the home sign in the brain sets the direction
+        elif "banana" in seek.split("+") or state.get("goal_heading", "none") != "none":
+            p, urg, jump = (0.8, 0.05, 0.1, 0.05), 1, 0.05    # FORAGE; odor signs + heading drive steer
         elif state["odor"] != "none" and state["odor_memory"] != "punished":
             p, urg, jump = (0.8, 0.05, 0.1, 0.05), 1, 0.05
         elif state["home"] != "here":
@@ -319,11 +333,41 @@ if __name__ == "__main__":
     out[OUT_KC_ACTIVE], out[OUT_ODOR_MATCH], out[OUT_VALENCE], out[OUT_HOME_X] = 100, 0.9, 0.1, 40
     s = describe(out, loom=0.0, odor_names={0: "banana"})
     assert s == {"threat": "none", "odor": "banana", "odor_familiarity": "familiar", "odor_memory": "rewarded",
-                 "home": "ahead, far", "moving": "no"}, s
+                 "home": "ahead, far", "moving": "no", "goal_seek": "none", "goal_avoid": "none",
+                 "goal_heading": "none", "goal_rest": "no"}, s
     worker_init(("rules",))
     d = worker_decide(s)
     assert d.probs.index(max(d.probs)) == BEHAVIOURS.index("FORAGE") and 0 <= d.urgency <= 1
     assert worker_decide(describe(out, loom=0.6, odor_names={}))[0][1] > 0.5     # FLEE under threat
+    # goal-aware rules: a threat beats every goal; rest > home > forage; no goal = today's rules
+    from goals import Goal
+    rules = rules_backend()
+
+    def choice(state):
+        p = rules(state).probs
+        return BEHAVIOURS[p.index(max(p))]
+
+    def G(seek=(), avoid=(), heading=None, rest=False):
+        return Goal(seek, avoid, heading, rest, "", "parser")
+
+    names = {0: "banana"}
+    for g in (G(rest=True), G(seek=("banana",)), G(seek=("home",)), G(heading="north")):
+        assert choice(describe(out, 0.6, names, g)) == "FLEE", g
+    assert choice(describe(out, 0.0, names, G(rest=True))) == "IDLE"
+    assert choice(describe(out, 0.0, names, G(seek=("home",)))) == "ORIENT"
+    assert choice(describe(out, 0.0, names, G(seek=("banana",)))) == "FORAGE"
+    assert choice(describe(out, 0.0, names, G(avoid=("home",)))) == "FORAGE"           # home far
+    no_odor = out.clone()
+    no_odor[OUT_KC_ACTIVE] = 0
+    assert choice(describe(no_odor, 0.0, names, G(heading="north"))) == "FORAGE"
+    for home_x in (10.0, 1.0):                                                          # "…, near" and "here"
+        near = out.clone()
+        near[OUT_HOME_X] = home_x
+        assert choice(describe(near, 0.0, names, G(avoid=("home",)))) == "ORIENT", home_x
+    st = describe(out, 0.0, names, G(seek=("home", "banana"), heading="north-east"))
+    assert (st["goal_seek"], st["goal_avoid"], st["goal_heading"], st["goal_rest"]) == ("banana+home", "none", "north-east", "no")
+    plain = {k: v for k, v in describe(out, 0.0, names).items() if not k.startswith("goal_")}
+    assert rules(plain).probs == rules(describe(out, 0.0, names)).probs                 # old states still work
     # http backend against a local stand-in for laya-serve: parse + persistent connection
     import threading
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer

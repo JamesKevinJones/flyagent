@@ -1,6 +1,6 @@
 # Verification
 
-Use `PY="C:/Users/kj638/Kevin codes/ComfyUI/.venv/Scripts/python.exe"` (CUDA torch) or any env from requirements.txt.
+Use `PY=.venv/Scripts/python.exe` (the project env, CPU torch). For the CUDA checks, Laya and `synthetic`, use a CUDA torch such as `PY="C:/Users/kj638/Kevin codes/ComfyUI/.venv/Scripts/python.exe"`; with CPU torch, `fruit_fly_circuits.py` checks only the CPU path.
 
 ## Self-checks (must print OK)
 

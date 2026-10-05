@@ -11,7 +11,7 @@ asynchronously in its own process. README.md holds the measured tradeoff matrix 
 - Python 3.12 (measured), torch 2.14+cu130, numpy, psutil; transformers 5.x for the synthetic backend
 - Optional: `laya` 0.3.27 (PyPI, Apache-2.0) for the local backend
 - Optional: any OpenAI-compatible LLM for the `llm` backend, configured by env (`GEMINI_API_KEY`, or `LLM_BASE_URL`/`LLM_API_KEY`/`LLM_MODEL`). Never commit keys
-- No env of its own yet: runs with `Kevin codes\ComfyUI\.venv\Scripts\python.exe`, which already has CUDA torch
+- Own env: `.venv` (Python 3.12, CPU torch; `uv venv --python 3.12 .venv`, then CPU torch from download.pytorch.org/whl/cpu, then `requirements.txt`). GPU work (`--device cuda`, Laya, synthetic) still needs a CUDA torch, e.g. `Kevin codes\ComfyUI\.venv`
 
 ## Layout
 

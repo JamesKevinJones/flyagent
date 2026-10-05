@@ -50,6 +50,7 @@ validation is stricter than needed; provider error text can reach the page; `Wor
 - Single timing runs vary on Windows (one rules/CPU run had 173 overruns, the next two 5 and 7).
   Judge tick timing over several runs.
 - With `rules` (no GPU load), circuits on the CPU beat CUDA because the idle GPU wakes every tick.
+- `.venv` has CPU-only torch: `--device cuda`, Laya and `synthetic` need the ComfyUI env (CUDA torch). Plain `python` is the system 3.14 with no torch.
 - Anything that imports `laya` needs `PYTHONPATH=.deps`.
 - Laya's default load keeps FP32 weights (1.6 GB); `laya_backend` casts to bf16 *before* the VRAM cap.
 - After about 5 s idle the dGPU sits at P8, and the next model call costs 300+ ms.

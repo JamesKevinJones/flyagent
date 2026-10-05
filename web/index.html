@@ -1,1 +1,263 @@
-<!doctype html><html><body>flyagent</body></html>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>flyagent: type a goal</title>
+<style>
+  @font-face { font-family: "Cascadia Code"; src: url("/CascadiaCode.ttf") format("truetype"); font-weight: 200 700; }
+  :root {
+    --bg: #0d0f0c; --panel: #151813; --line: #252a22; --text: #ece8dc; --dim: #9a9686;
+    --amber: #f0a03c; --red: #e2513b; --earth: #9aa57a;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 "Cascadia Code", ui-monospace, monospace; }
+  main { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 20px; padding: 20px; min-height: 100vh; }
+  h1 { font-size: 18px; font-weight: 600; margin: 0; }
+  h2 { font-size: 12px; font-weight: 400; color: var(--dim); text-transform: uppercase; letter-spacing: .08em; margin: 0 0 10px; }
+  .arena { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; display: flex; flex-direction: column; min-height: 0; }
+  .arena header { display: flex; justify-content: space-between; align-items: baseline; padding: 14px 16px 0; gap: 12px; }
+  .legend { color: var(--dim); font-size: 12px; display: flex; gap: 14px; flex-wrap: wrap; }
+  .legend b { font-weight: 400; }
+  .legend .banana { color: var(--amber); } .legend .geosmin { color: var(--earth); }
+  canvas#arena { flex: 1; width: 100%; min-height: 360px; display: block; }
+  aside { display: flex; flex-direction: column; gap: 16px; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 16px; }
+  form { display: flex; gap: 8px; }
+  label.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  input[type=text] { flex: 1; min-width: 0; background: var(--bg); color: var(--text); border: 1px solid var(--line);
+    border-radius: 4px; padding: 9px 10px; font: inherit; }
+  input[type=text]:focus-visible, button:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+  button { font: inherit; color: var(--text); background: #20251e; border: 1px solid var(--line); border-radius: 4px;
+    padding: 8px 12px; cursor: pointer; }
+  button:hover { background: #283024; }
+  button.primary { background: var(--amber); color: #1a1408; border-color: var(--amber); font-weight: 600; }
+  button.primary:hover { background: #f5b25c; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .chips button { font-size: 13px; padding: 5px 9px; color: var(--dim); }
+  .chips button:hover { color: var(--text); }
+  .card { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 12px; min-height: 96px; }
+  .card .typed { color: var(--dim); word-break: break-word; }
+  .fields { display: grid; grid-template-columns: 70px 1fr; gap: 2px 10px; margin: 8px 0; }
+  .fields dt { color: var(--dim); } .fields dd { margin: 0; }
+  .badge { display: inline-block; font-size: 12px; padding: 1px 7px; border-radius: 3px; border: 1px solid currentColor; }
+  .badge.parser { color: var(--amber); } .badge.llm { color: #b9c48a; } .badge.default { color: var(--dim); }
+  .meta { color: var(--dim); font-size: 13px; font-variant-numeric: tabular-nums; }
+  .ignored { color: var(--red); }
+  .brain { display: grid; grid-template-columns: 130px 1fr; gap: 16px; align-items: center; }
+  canvas#compass { width: 130px; height: 130px; display: block; }
+  .bars { display: grid; grid-template-columns: 62px 1fr 38px; gap: 6px 8px; align-items: center; font-size: 13px; }
+  .bar { height: 8px; background: #20251e; border-radius: 2px; overflow: hidden; }
+  .bar i { display: block; height: 100%; width: 0; background: var(--dim); }
+  .bars .on { color: var(--text); } .bars .on + .bar i { background: var(--amber); }
+  .num { text-align: right; font-variant-numeric: tabular-nums; color: var(--dim); }
+  .jump { margin-top: 10px; font-size: 13px; color: var(--dim); }
+  .jump.fired { color: var(--red); font-weight: 600; }
+  .controls { display: flex; gap: 8px; }
+  footer { grid-column: 1 / -1; display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .status.down { color: var(--red); }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } canvas#arena { min-height: 300px; aspect-ratio: 1; flex: none; } }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<main>
+  <div class="arena">
+    <header>
+      <h1>flyagent</h1>
+      <div class="legend" aria-hidden="true">
+        <b class="banana">● banana</b><b class="geosmin">● geosmin</b><b>○ home</b><b>▲ fly</b>
+      </div>
+    </header>
+    <canvas id="arena" role="img" aria-label="Top-down arena: the fly, its trail, the banana and geosmin odor sources, and home"></canvas>
+  </div>
+
+  <aside>
+    <section aria-labelledby="goal-h">
+      <h2 id="goal-h">Goal</h2>
+      <form id="goal-form">
+        <label class="sr" for="goal">Type a goal for the fly</label>
+        <input id="goal" type="text" maxlength="200" autocomplete="off" placeholder="e.g. avoid the smell and head north">
+        <button class="primary" type="submit">Send</button>
+      </form>
+      <div class="chips" aria-label="Example goals">
+        <button type="button">find the banana</button>
+        <button type="button">avoid the smell and head north</button>
+        <button type="button">go home</button>
+        <button type="button">rest</button>
+        <button type="button">I'm starving but that mouldy stink is gross</button>
+      </div>
+      <div class="card" id="card" aria-live="polite">
+        <p class="meta">No goal yet. The fly forages by default.</p>
+      </div>
+    </section>
+
+    <section aria-labelledby="brain-h">
+      <h2 id="brain-h">Brain</h2>
+      <div class="brain">
+        <canvas id="compass" width="260" height="260" role="img" aria-label="Ring-attractor compass: 16 wedges, brightness is neural activity"></canvas>
+        <div>
+          <div class="bars" id="bars"></div>
+          <p class="jump" id="jump">escape reflex: ready</p>
+        </div>
+      </div>
+    </section>
+
+    <section aria-labelledby="ctl-h">
+      <h2 id="ctl-h">World</h2>
+      <div class="controls">
+        <button type="button" id="predator">Launch predator</button>
+        <button type="button" id="reset">Reset</button>
+      </div>
+    </section>
+  </aside>
+
+  <footer class="meta">
+    <span class="status" id="status">connecting…</span>
+    <span id="ticks">tick period p50 – · p99 – ms</span>
+  </footer>
+</main>
+
+<script>
+const BEHAVIOURS = ["FORAGE", "FLEE", "ORIENT", "IDLE"];
+const $ = (id) => document.getElementById(id);
+const arena = $("arena"), actx = arena.getContext("2d");
+const compass = $("compass"), cctx = compass.getContext("2d");
+let snap = null, trail = [], lastReset = 0;
+
+$("bars").innerHTML = BEHAVIOURS.map(b =>
+  `<span id="l-${b}">${b.toLowerCase()}</span><span class="bar"><i id="b-${b}"></i></span><span class="num" id="n-${b}">0.00</span>`).join("");
+
+// ---- live stream: store the latest snapshot; drawing happens on animation frames
+function connect() {
+  const es = new EventSource("/stream");
+  es.onopen = () => { $("status").textContent = "live"; $("status").classList.remove("down"); };
+  es.onerror = () => { $("status").textContent = "disconnected: is serve.py still running? retrying…"; $("status").classList.add("down"); };
+  es.onmessage = (e) => {
+    const s = JSON.parse(e.data);
+    if (snap && s.t < snap.t) trail = [];                 // the sim was reset
+    snap = s;
+    trail.push([s.x, s.y]);
+    if (trail.length > 900) trail.shift();
+    updatePanels(s);
+  };
+}
+
+function updatePanels(s) {
+  for (const b of BEHAVIOURS) {
+    const p = s.probs[b];
+    $("b-" + b).style.width = (p * 100).toFixed(0) + "%";
+    $("n-" + b).textContent = p.toFixed(2);
+    $("l-" + b).className = b === s.behaviour ? "on" : "";
+  }
+  const j = $("jump");
+  j.textContent = s.jump ? "escape reflex: JUMP" : s.loom > 0 ? "escape reflex: predator looming" : "escape reflex: ready";
+  j.classList.toggle("fired", s.jump || s.loom > 0);
+  $("ticks").textContent = `tick period p50 ${s.tick_p50.toFixed(2)} · p99 ${s.tick_p99.toFixed(2)} ms`;
+}
+
+// ---- drawing
+function fit(canvas, ctx) {
+  const r = canvas.getBoundingClientRect(), d = window.devicePixelRatio || 1;
+  if (canvas.width !== Math.round(r.width * d) || canvas.height !== Math.round(r.height * d)) {
+    canvas.width = Math.round(r.width * d); canvas.height = Math.round(r.height * d);
+  }
+  ctx.setTransform(d, 0, 0, d, 0, 0);
+  return [r.width, r.height];
+}
+
+function drawArena() {
+  const [w, h] = fit(arena, actx);
+  actx.clearRect(0, 0, w, h);
+  if (!snap) return;
+  const half = (snap.wall || 60) + 6, scale = Math.min(w, h) / (2 * half);
+  const X = (x) => w / 2 + x * scale, Y = (y) => h / 2 - y * scale;   // world y points up
+  if (snap.wall) {
+    actx.strokeStyle = "#252a22"; actx.lineWidth = 1;
+    actx.strokeRect(X(-snap.wall), Y(snap.wall), 2 * snap.wall * scale, 2 * snap.wall * scale);
+  }
+  const colors = { banana: "240,160,60", geosmin: "154,165,122" };
+  for (const [name, [sx, sy]] of Object.entries(snap.sources)) {   // odor plume: exp(-d^2/400)
+    const g = actx.createRadialGradient(X(sx), Y(sy), 0, X(sx), Y(sy), 40 * scale);
+    g.addColorStop(0, `rgba(${colors[name]},0.35)`); g.addColorStop(1, `rgba(${colors[name]},0)`);
+    actx.fillStyle = g; actx.beginPath(); actx.arc(X(sx), Y(sy), 40 * scale, 0, 2 * Math.PI); actx.fill();
+    actx.fillStyle = `rgb(${colors[name]})`; actx.beginPath(); actx.arc(X(sx), Y(sy), 4, 0, 2 * Math.PI); actx.fill();
+    actx.fillStyle = "#9a9686"; actx.font = "12px 'Cascadia Code', monospace";
+    actx.fillText(name, X(sx) + 8, Y(sy) - 8);
+  }
+  actx.strokeStyle = "#ece8dc"; actx.lineWidth = 1.5;
+  actx.beginPath(); actx.arc(X(snap.home.x), Y(snap.home.y), 7, 0, 2 * Math.PI); actx.stroke();
+  for (let i = 1; i < trail.length; i++) {                        // trail fades with age
+    actx.strokeStyle = `rgba(240,160,60,${(i / trail.length) * 0.6})`;
+    actx.beginPath(); actx.moveTo(X(trail[i - 1][0]), Y(trail[i - 1][1])); actx.lineTo(X(trail[i][0]), Y(trail[i][1])); actx.stroke();
+  }
+  if (snap.loom > 0) {                                            // the loom: a ring closing in
+    actx.strokeStyle = `rgba(226,81,59,${0.3 + 0.7 * snap.loom})`; actx.lineWidth = 3;
+    actx.beginPath(); actx.arc(X(snap.x), Y(snap.y), 60 - 45 * snap.loom, 0, 2 * Math.PI); actx.stroke();
+  }
+  actx.save();                                                    // the fly, pointing along its heading
+  actx.translate(X(snap.x), Y(snap.y)); actx.rotate(-snap.heading);
+  actx.fillStyle = snap.jump ? "#e2513b" : "#f0a03c";
+  actx.beginPath(); actx.moveTo(11, 0); actx.lineTo(-7, 6); actx.lineTo(-4, 0); actx.lineTo(-7, -6); actx.closePath(); actx.fill();
+  actx.restore();
+}
+
+function drawCompass() {
+  const [w, h] = fit(compass, cctx);
+  cctx.clearRect(0, 0, w, h);
+  const cx = w / 2, cy = h / 2, rOut = w / 2 - 4, rIn = rOut * 0.62;
+  const bump = snap ? snap.bump : new Array(16).fill(0), max = Math.max(...bump, 1e-6);
+  for (let i = 0; i < 16; i++) {                                  // wedge i sits at angle i*2pi/16, counterclockwise
+    const c = (i * Math.PI) / 8, a0 = -(c + Math.PI / 16 - 0.03), a1 = -(c - Math.PI / 16 + 0.03);
+    cctx.fillStyle = `rgba(240,160,60,${0.06 + 0.94 * bump[i] / max})`;
+    cctx.beginPath(); cctx.arc(cx, cy, rOut, a0, a1); cctx.arc(cx, cy, rIn, a1, a0, true); cctx.closePath(); cctx.fill();
+  }
+  if (snap) {
+    cctx.strokeStyle = "#ece8dc"; cctx.lineWidth = 2;
+    cctx.beginPath(); cctx.moveTo(cx, cy);
+    cctx.lineTo(cx + Math.cos(snap.brain_heading) * rIn * 0.85, cy - Math.sin(snap.brain_heading) * rIn * 0.85); cctx.stroke();
+  }
+  cctx.fillStyle = "#9a9686"; cctx.font = "11px 'Cascadia Code', monospace"; cctx.textAlign = "center";
+  cctx.fillText("N", cx, 12);
+}
+
+function frame() { drawArena(); drawCompass(); requestAnimationFrame(frame); }
+
+// ---- goals
+const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+const list = (xs) => xs.length ? xs.join(", ") : "–";
+
+async function sendGoal(text) {
+  $("card").innerHTML = `<p class="typed">“${esc(text)}”</p><p class="meta">Interpreting…</p>`;
+  try {
+    const r = await fetch("/goal", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || r.status);
+    const g = d.goal;
+    $("card").innerHTML = `
+      <p class="typed">“${esc(text || "(empty: back to default foraging)")}”</p>
+      <dl class="fields">
+        <dt>seek</dt><dd>${esc(list(g.seek))}</dd>
+        <dt>avoid</dt><dd>${esc(list(g.avoid))}</dd>
+        <dt>heading</dt><dd>${esc(g.heading || "–")}</dd>
+        <dt>rest</dt><dd>${g.rest ? "yes" : "no"}</dd>
+      </dl>
+      <p class="meta"><span class="badge ${esc(d.source)}">${esc(d.source === "llm" ? "LLM" : d.source)}</span> · ${d.ms.toFixed(1)} ms
+      ${d.ignored.length ? ` · <span class="ignored">ignored: ${esc(d.ignored.join(", "))}</span>` : ""}</p>
+      ${d.note ? `<p class="meta">${esc(d.note)}</p>` : ""}`;
+  } catch (e) {
+    $("card").innerHTML = `<p class="typed">“${esc(text)}”</p><p class="meta ignored">Couldn't send that goal: ${esc(e.message)}</p>`;
+  }
+}
+
+$("goal-form").addEventListener("submit", (e) => { e.preventDefault(); sendGoal($("goal").value.trim()); });
+document.querySelectorAll(".chips button").forEach((b) =>
+  b.addEventListener("click", () => { $("goal").value = b.textContent; sendGoal(b.textContent); }));
+$("predator").addEventListener("click", () => fetch("/predator", { method: "POST" }));
+$("reset").addEventListener("click", () => { trail = []; fetch("/reset", { method: "POST" }); });
+
+connect();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

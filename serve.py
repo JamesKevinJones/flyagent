@@ -19,7 +19,7 @@ from goals import interpret, make_llm
 
 MAX_BODY = 2048
 WEB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
-STATIC = {"/": ("index.html", "text/html; charset=utf-8")}
+STATIC = {"/": ("index.html", "text/html; charset=utf-8"), "/CascadiaCode.ttf": ("CascadiaCode.ttf", "font/ttf")}
 
 
 class SimRunner:

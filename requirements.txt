@@ -1,0 +1,5 @@
+torch>=2.4          # CUDA build; measured on 2.14+cu130
+numpy
+psutil              # CPU affinity + priority on Windows
+transformers>=4.48  # only for the `synthetic` System-1 backend (ModernBERT)
+# laya>=0.3.27      # optional: local Laya backend (+808 MB weights on first load)

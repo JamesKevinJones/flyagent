@@ -29,6 +29,15 @@ PYTHONPATH=.deps "$PY" agent_loop.py --device cpu --backends laya,rules --ticks 
 Expected right now: rules at 100% on every check. Laya threat→FLEE at about 99%, rewarded→FORAGE at about 26%.
 Closed loop with Laya: ORIENT around 1980 ticks, tick period p99 about 15 ms.
 
+## Any LLM key (OpenAI-compatible)
+
+```bash
+LLM_TIMEOUT=60 LLM_BASE_URL=http://127.0.0.1:11434/v1 LLM_MODEL=qwen3:4b-instruct-2507-q4_K_M "$PY" eval_system1.py llm --n 120
+```
+
+Swap in `GEMINI_API_KEY` alone, or `LLM_BASE_URL` + `LLM_API_KEY` + `LLM_MODEL`, for a hosted provider.
+Expected with the local Qwen3-4B: threat→FLEE about 95%, choice agreement with rules about 86%.
+
 ## Known-failing
 
 - Max tick period (27–39 ms) exceeds 15 ms under Windows; p99 doesn't. This isn't a regression.

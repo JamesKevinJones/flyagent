@@ -4,6 +4,20 @@ Append-only. Newest at the top.
 
 ---
 
+## 2026-10-05: One generic `llm` backend for every provider key
+
+**Context.** The repo goes public, and anyone cloning it should be able to plug in their own key
+(Gemini, OpenAI, Anthropic, Groq, OpenRouter, local Ollama) without installing Laya or opening a Cloudflare account.
+**Decision.** One backend over the OpenAI-compatible `/chat/completions` API, using the stdlib `http.client`
+and the same persistent-connection helper as the Jev client. It's configured only through env vars, with a
+`GEMINI_API_KEY`-only shortcut.
+**Why not one SDK per provider.** That means five dependencies and five code paths for one JSON POST. Every
+listed provider exposes the OpenAI-compatible endpoint.
+**Consequences.** Provider-specific features (native structured-output schemas, thinking controls) aren't
+used. The prompt is generated from `QUESTIONS`, so Laya and the LLM always see the same criteria.
+
+---
+
 ## 2026-10-05: Circuits default to the CPU
 
 **Context.** With `rules` as System 1 nothing keeps the GPU busy, and the idle GPU wakes up on every

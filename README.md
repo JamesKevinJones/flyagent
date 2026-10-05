@@ -35,7 +35,7 @@ download.
 | Same, sustained 90 s | p50 11.1 → 12.7 ms, throughput 86 → 73 inf/s (−15%) | | GPU at **88–89 °C within 15 s**, drawing only 30–39 W. |
 | Laya INT8 (TensorRT / ORT) | *estimate* 5–8 ms | ~0.45 GB | Not measured (no TensorRT here). Weight reads alone take 4.1 ms in FP16 at 192 GB/s vs 2.1 ms in INT8, and the measured 10.7 ms isn't at that floor yet. Re-fit calibration afterwards: INT8 shifts probabilities. |
 | Laya on a T4 | 32.8–39.5 ms | | *published* (model card), stock path. |
-| Jev via Cloudflare Workers AI | 70–500 ms end to end, p50 ~76–276 ms | 0 | *published*. Your nearest edge is Coimbatore (`colo=CJB`). TCP connect took **20–68 ms**, and a fresh HTTPS request took **57–300 ms** before any inference (measured). Where the GPU behind the edge runs isn't documented. |
+| Jev via Cloudflare Workers AI | 70–500 ms end to end, p50 ~76–276 ms | 0 | *published*. The nearest Cloudflare edge to this laptop is in India. TCP connect took **20–68 ms**, and a fresh HTTPS request took **57–300 ms** before any inference (measured). Where the GPU behind the edge runs isn't documented. |
 
 ### What the numbers decide
 
@@ -91,7 +91,7 @@ connectome (FlyWire: ~140k neurons, ~50M synapses: at most ~300 MB as FP16-value
 └────────────────────────────────────────────────────────────────────────┘   └────────────┬─────────────┘
         ▲            only when the worded state changes, and not cached ──────────────────┘
         │                                  ▼
-        │      Laya (local, ≤1.5 GB) → Jev / laya-serve (HTTP) → rules
+        │      rules (default) | Laya (local, ≤1.5 GB) | Jev / laya-serve | any LLM key
         │      Choice: FORAGE/FLEE/ORIENT/IDLE  Score: urgency 0..3  Noul: prime jump
         └──────── latched into inp[6:12] on the next tick after arrival
 ```
@@ -196,6 +196,46 @@ biased gyro (`--gyro-bias`, default 0.0005 rad/tick ≈ 2°/s) and a landmark (`
 Without the landmark, path integration runs on the drifting heading. The home vector goes wrong, and the
 fly idles 30% of the run because it thinks it is home. Raise the gain for a reliable landmark (faster
 correction, smaller error); lower it for a noisy one (noise passes through in proportion to the gain).
+
+### 3d. Bring your own LLM key (any provider)
+
+The `llm` backend talks to any OpenAI-compatible chat API, so any provider's key works. It's
+configured only through environment variables; keys never go in files or flags:
+
+| Provider | Set | Tested here |
+|---|---|---|
+| **Gemini** | `GEMINI_API_KEY` (base URL and model default to Gemini's OpenAI endpoint and `gemini-3.8-flash`; `LLM_MODEL` overrides) | Self-check only (no key) |
+| OpenAI | `LLM_BASE_URL=https://api.openai.com/v1`, `LLM_API_KEY`, `LLM_MODEL` | No |
+| Anthropic | `LLM_BASE_URL=https://api.anthropic.com/v1`, `LLM_API_KEY`, `LLM_MODEL` | No |
+| Groq / OpenRouter | `LLM_BASE_URL=https://api.groq.com/openai/v1` or `https://openrouter.ai/api/v1`, `LLM_API_KEY`, `LLM_MODEL` | No |
+| **Ollama (local, no key)** | `LLM_BASE_URL=http://127.0.0.1:11434/v1`, `LLM_MODEL=<model>` | **Yes** |
+
+```bash
+export GEMINI_API_KEY=...                  # PowerShell: $env:GEMINI_API_KEY = "..."
+python agent_loop.py --backends llm,rules
+python eval_system1.py llm --n 120         # score it against the rule table first
+```
+
+`LLM_TIMEOUT` (default 5 s) caps each call. On a timeout, an error, or a reply that isn't the expected
+JSON, that decision falls back to `rules`. The reply is treated as untrusted input: probabilities are
+clamped and renormalised, and anything else raises.
+
+**Measured with Ollama `qwen3:4b-instruct-2507-q4_K_M`** (120 random states):
+
+| Check | Rules | Laya | Qwen3-4B (LLM) |
+|---|---|---|---|
+| Threat → FLEE | 100% | 99.2% | 95.3% |
+| Imminent → P(jump) > 0.5 | 100% | 62.8% | 100% |
+| Rewarded odor, safe → FORAGE | 100% | 26.0% | 83.3% |
+| Punished odor, safe → not FORAGE | 100% | 32.8% | 100% |
+| Mean P(FLEE) when imminent | 0.85 | 0.32 | 0.94 |
+| Time per decision | ~10 µs | 37–110 ms | **~1.7 s** (3–5 s in the loop) |
+
+A general LLM reads the field-named criteria far better than Laya, but in the closed loop it's too
+slow to steer the fly. Only 40 decisions arrived in 30 s, and the 450 ms predator loom ended before
+any FLEE answer did. The giant-fiber reflex handled the escape (16 jumps), and tick timing held
+(p99 16.1 ms). For this state space, `rules` stays the default. An LLM backend fits slower
+deliberation: route choice, or reading free-text instructions.
 
 ---
 

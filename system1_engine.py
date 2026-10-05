@@ -3,6 +3,7 @@
 Backends, tried in order until one answers:
   laya       local Laya (`pip install laya`), in this process's CUDA context, hard-capped at 1.5 GB VRAM
   http       TypeSafe Jev (Cloudflare Workers AI `typesafe/jev`) or a self-hosted `laya-serve`
+  llm        any OpenAI-compatible chat API with your own key: Gemini, OpenAI, Anthropic, Groq, Ollama, ...
   synthetic  random-weight ModernBERT-large graph (same GPU cost as Laya, no download) + rule answers
   rules      deterministic fallback so the agent never stalls without a decision
 
@@ -122,27 +123,17 @@ def laya_backend(model=os.environ.get("LAYA_MODEL", "convaiinnovations/laya-type
     return decide
 
 
-def http_backend(url=os.environ.get("JEV_URL"), key=os.environ.get("JEV_API_KEY"), timeout=0.5):
-    """Two wire shapes, picked from the URL:
-      .../ai/run    Cloudflare Workers AI (how Jev is served): {"model": "typesafe/jev", "input": {...}}
-      anything else `laya-serve` / Jev-native: POST {url}/v1/systemone with {"state", "questions"}
-    One persistent connection: a fresh TLS handshake to the nearest Cloudflare edge measured 57-300 ms
-    from this laptop, before any inference, so reconnecting per decision would dominate."""
-    if not url:
-        raise RuntimeError("JEV_URL not set")
+def _poster(url, key, timeout):
+    """POST JSON over one persistent connection, reconnecting after any error. Returns (base path, post).
+    Persistent because a fresh TLS handshake to the nearest Cloudflare edge measured 57-300 ms from
+    this laptop, before any inference, so reconnecting per decision would dominate."""
     u = urllib.parse.urlsplit(url)
-    cloudflare = u.path.rstrip("/").endswith("/ai/run")
-    path = u.path if cloudflare else u.path.rstrip("/") + "/v1/systemone"
     conn_cls = http.client.HTTPSConnection if u.scheme == "https" else http.client.HTTPConnection
     headers = {"Content-Type": "application/json", **({"Authorization": f"Bearer {key}"} if key else {})}
     conn = None
 
-    def decide(state):
+    def post(path, payload):
         nonlocal conn
-        t0 = time.perf_counter()
-        payload = {"state": state, "questions": QUESTIONS}
-        if cloudflare:
-            payload = {"model": "typesafe/jev", "input": payload}
         conn = conn or conn_cls(u.netloc, timeout=timeout)
         try:
             conn.request("POST", path, json.dumps(payload), headers)
@@ -150,11 +141,76 @@ def http_backend(url=os.environ.get("JEV_URL"), key=os.environ.get("JEV_API_KEY"
             body = json.load(r)
             if r.status != 200:
                 raise RuntimeError(f"HTTP {r.status}: {str(body)[:200]}")
+            return body
         except Exception:
             conn.close()
             conn = None
             raise
+    return u.path.rstrip("/"), post
+
+
+def http_backend(url=os.environ.get("JEV_URL"), key=os.environ.get("JEV_API_KEY"), timeout=0.5):
+    """Two wire shapes, picked from the URL:
+      .../ai/run    Cloudflare Workers AI (how Jev is served): {"model": "typesafe/jev", "input": {...}}
+      anything else `laya-serve` / Jev-native: POST {url}/v1/systemone with {"state", "questions"}"""
+    if not url:
+        raise RuntimeError("JEV_URL not set")
+    base, post = _poster(url, key, timeout)
+    cloudflare = base.endswith("/ai/run")
+    path = base if cloudflare else base + "/v1/systemone"
+
+    def decide(state):
+        t0 = time.perf_counter()
+        payload = {"state": state, "questions": QUESTIONS}
+        if cloudflare:
+            payload = {"model": "typesafe/jev", "input": payload}
+        body = post(path, payload)
         return _parse(body.get("result", body)["answers"], "http", t0)  # Cloudflare wraps in "result"
+    return decide
+
+
+GEMINI_OPENAI_URL = "https://generativelanguage.googleapis.com/v1beta/openai"
+LLM_PROMPT = "\n".join([
+    "You choose a fruit fly's next behaviour from its sensed state (the user message, JSON).",
+    "Reply with JSON only, in exactly this shape:",
+    '{"behaviour": {"FORAGE": p, "FLEE": p, "ORIENT": p, "IDLE": p}, "urgency": n, "jump": p}',
+    "Each p is a probability (the four behaviour probabilities sum to 1); n is an integer 0-3.",
+    "behaviour: " + QUESTIONS["behaviour"]["instructions"],
+    *(f"  {k}: {v}" for k, v in QUESTIONS["behaviour"]["criteria"].items()),
+    "urgency: " + "; ".join(f"{i} = {v}" for i, v in enumerate(URGENCY_LEVELS)),
+    "jump: probability that " + QUESTIONS["jump"]["criteria"]["true"],
+])
+
+
+def llm_backend():
+    """Any OpenAI-compatible chat-completions API, so any provider's key works. Configured by env only:
+      Gemini   GEMINI_API_KEY                     (base URL and model default to Gemini's; LLM_MODEL overrides)
+      others   LLM_BASE_URL, LLM_MODEL, LLM_API_KEY  (OpenAI, Anthropic, Groq, OpenRouter, ...)
+      local    LLM_BASE_URL=http://127.0.0.1:11434/v1 LLM_MODEL=<ollama model>   (no key needed)
+    The reply is untrusted: anything but the expected JSON raises, and the chain falls back to rules."""
+    env = os.environ
+    gemini = not env.get("LLM_BASE_URL") and env.get("GEMINI_API_KEY")
+    url = env.get("LLM_BASE_URL") or (GEMINI_OPENAI_URL if gemini else None)
+    key = env.get("LLM_API_KEY") or (env.get("GEMINI_API_KEY") if gemini else None)
+    model = env.get("LLM_MODEL") or ("gemini-3.8-flash" if gemini else None)
+    if not (url and model):
+        raise RuntimeError("set GEMINI_API_KEY, or LLM_BASE_URL + LLM_MODEL (+ LLM_API_KEY)")
+    base, post = _poster(url, key, float(env.get("LLM_TIMEOUT", "5")))
+
+    def decide(state):
+        t0 = time.perf_counter()
+        body = post(base + "/chat/completions", {
+            "model": model, "temperature": 0, "response_format": {"type": "json_object"},
+            "messages": [{"role": "system", "content": LLM_PROMPT}, {"role": "user", "content": json.dumps(state)}]})
+        text = body["choices"][0]["message"]["content"]
+        reply = json.loads(text[text.index("{"):text.rindex("}") + 1])   # tolerates code fences and preambles
+        p = [max(0.0, float(reply["behaviour"][b])) for b in BEHAVIOURS]
+        if not sum(p):
+            raise ValueError(f"all-zero behaviour probabilities: {text[:200]}")
+        answers = {"behaviour": {"probabilities": {b: x / sum(p) for b, x in zip(BEHAVIOURS, p)}},
+                   "urgency": {"score": min(3.0, max(0.0, float(reply["urgency"])))},
+                   "jump": {"noul": min(1.0, max(0.0, float(reply["jump"])))}}
+        return _parse(answers, "llm", t0)
     return decide
 
 
@@ -209,7 +265,8 @@ def synthetic_backend(tokens=128):
     return decide
 
 
-BACKENDS = {"laya": laya_backend, "http": http_backend, "synthetic": synthetic_backend, "rules": rules_backend}
+BACKENDS = {"laya": laya_backend, "http": http_backend, "llm": llm_backend, "synthetic": synthetic_backend,
+            "rules": rules_backend}
 
 
 # ------------------------------------------------------------------ worker-process entry points
@@ -267,11 +324,17 @@ if __name__ == "__main__":
         protocol_version = "HTTP/1.1"
 
         def do_POST(self):
-            seen.append((self.path, self.client_address[1]))
+            seen.append((self.path, self.client_address[1], self.headers.get("Authorization")))
             req = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-            assert set(req["questions"]) == set(QUESTIONS)
-            body = json.dumps({"answers": {"behaviour": {"probabilities": dict(zip(BEHAVIOURS, (0.1, 0.7, 0.1, 0.1)))},
-                                           "urgency": {"score": 3.0}, "jump": {"noul": 0.9}}}).encode()
+            if self.path.endswith("/chat/completions"):            # OpenAI-compatible: fenced JSON, unnormalised
+                assert req["model"] == "m" and json.loads(req["messages"][1]["content"]) == s
+                content = '```json\n{"behaviour": {"FORAGE": 1, "FLEE": 3, "ORIENT": 0, "IDLE": 0},' \
+                          ' "urgency": 3, "jump": 0.9}\n```'
+                body = json.dumps({"choices": [{"message": {"content": content}}]}).encode()
+            else:
+                assert set(req["questions"]) == set(QUESTIONS)
+                body = json.dumps({"answers": {"behaviour": {"probabilities": dict(zip(BEHAVIOURS, (0.1, 0.7, 0.1, 0.1)))},
+                                               "urgency": {"score": 3.0}, "jump": {"noul": 0.9}}}).encode()
             self.send_response(200)
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
@@ -286,5 +349,16 @@ if __name__ == "__main__":
     d1, d2 = hb(s), hb(s)
     assert d1.probs[1] == 0.7 and d1.urgency == 1.0 and d1.p_jump == 0.9
     assert seen[0][0] == "/v1/systemone" and seen[0][1] == seen[1][1], seen   # same client port = reused
+    os.environ.update(LLM_BASE_URL=f"http://127.0.0.1:{srv.server_port}/v1", LLM_MODEL="m", LLM_API_KEY="k")
+    d3 = llm_backend()(s)
+    assert seen[-1][0] == "/v1/chat/completions" and seen[-1][2] == "Bearer k", seen[-1]
+    assert d3.probs == (0.25, 0.75, 0.0, 0.0) and d3.urgency == 1.0 and d3.p_jump == 0.9 and d3.backend == "llm"
+    for k in ("LLM_BASE_URL", "LLM_MODEL", "LLM_API_KEY"):
+        del os.environ[k]
+    os.environ["GEMINI_API_KEY"] = "g"                                   # Gemini shortcut resolves its own defaults
+    try:
+        llm_backend()
+    finally:
+        del os.environ["GEMINI_API_KEY"]
     srv.shutdown()
     print("self-check OK", s)

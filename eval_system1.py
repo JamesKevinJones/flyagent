@@ -1,16 +1,19 @@
 """Compare a System-1 backend against the rule table over every state `describe()` can emit.
 
-    PYTHONPATH=.deps python eval_system1.py            # local Laya vs rules
+    PYTHONPATH=.deps python eval_system1.py            # local Laya vs rules, all states
+    python eval_system1.py llm --n 120                 # any OpenAI-compatible LLM (env-configured), random sample
 
 Ground truth exists only where the intended policy is unambiguous (the `EXPECT` cases below);
 everywhere else the report is plain agreement with the rule table, which is a baseline, not truth.
 """
+import argparse
 import itertools
+import random
 import time
 from collections import Counter
 
 from fruit_fly_circuits import BEHAVIOURS
-from system1_engine import QUESTIONS, rules_backend
+from system1_engine import BACKENDS, QUESTIONS, rules_backend
 
 THREATS = ("none", "approaching", "imminent")
 ODORS = [("none", "n/a", "neutral")] + list(itertools.product(("banana", "geosmin", "unknown"), ("new", "familiar"),
@@ -51,13 +54,17 @@ def laya_decisions(states, questions=QUESTIONS, batch=32):
     return out
 
 
-def rules_decisions(states):
-    decide = rules_backend()
+def backend_decisions(states, decide=None):
+    timed = decide is not None
+    decide = decide or rules_backend()
     out = []
+    t0 = time.perf_counter()
     for s in states:
         d = decide(s)
         out.append({"choice": BEHAVIOURS[d.probs.index(max(d.probs))], "p": dict(zip(BEHAVIOURS, d.probs)),
                     "urgency": d.urgency, "p_jump": d.p_jump})
+    if timed:
+        print(f"{len(states)} states in {time.perf_counter() - t0:.1f}s")
     return out
 
 
@@ -65,6 +72,8 @@ def report(name, states, ds, ref):
     print(f"\n== {name}")
     for label, which, ok in EXPECT:
         idx = [i for i, s in enumerate(states) if which(s)]
+        if not idx:
+            continue
         print(f"  {label:36s} {sum(ok(ds[i]) for i in idx) / len(idx):6.1%}   (n={len(idx)})")
     for t in THREATS:
         idx = [i for i, s in enumerate(states) if s["threat"] == t]
@@ -78,7 +87,14 @@ def report(name, states, ds, ref):
 
 
 if __name__ == "__main__":
+    ap = argparse.ArgumentParser()
+    ap.add_argument("backend", nargs="?", default="laya", choices=sorted(set(BACKENDS) - {"rules", "synthetic"}))
+    ap.add_argument("--n", type=int, default=0, help="random sample of states (0 = all 1,938)")
+    args = ap.parse_args()
     states = list(all_states())
-    ref = rules_decisions(states)
+    if args.n:
+        states = random.Random(0).sample(states, args.n)
+    ref = backend_decisions(states)
     report("rules", states, ref, None)
-    report("laya-typed-decisions (zero-shot)", states, laya_decisions(states), ref)
+    ds = laya_decisions(states) if args.backend == "laya" else backend_decisions(states, BACKENDS[args.backend]())
+    report(args.backend, states, ds, ref)

@@ -1,8 +1,14 @@
 # flyagent
 
 A hybrid agent: a *Drosophila* circuit model (central complex, mushroom body, ventral nerve
-cord) runs at a fixed 15 ms tick, and a typed "System 1" decision model (Laya locally, or
-TypeSafe Jev hosted) picks the behaviour asynchronously.
+cord) runs at a fixed 15 ms tick, and a typed "System 1" decision layer picks the behaviour
+asynchronously: a rule table by default, or Laya locally, TypeSafe Jev, or any LLM key.
+
+[![flyagent in 21 seconds: the fly's compass and smell circuits running, a 421M-parameter model failing to flee, and the if-statement that did. Click to play.](docs/media/brag.jpg)](docs/media/brag.mp4)
+
+*21 seconds, with sound. Click the image to play ([docs/media/brag.mp4](docs/media/brag.mp4)). The compass
+and Kenyon-cell frames are real `FlyBrain` output. Music: "Happy Beats / Business Moves Vol. 11" by
+[ende.app](https://ende.app/en) (CC BY 4.0); sound effects by Kenney and unicae_games (CC0).*
 
 ```bash
 python fruit_fly_circuits.py          # circuit self-checks, CPU + CUDA

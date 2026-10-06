@@ -1,6 +1,6 @@
 """System 1: typed decisions (Choice / Score / Noul) over the fly's state.
 
-Backends, tried in order until one answers:
+Backends (the first one named in --backends fills a precompiled table; rules cover the gaps):
   laya       local Laya (`pip install laya`), in this process's CUDA context, hard-capped at 1.5 GB VRAM
   http       TypeSafe Jev (Cloudflare Workers AI `typesafe/jev`) or a self-hosted `laya-serve`
   llm        any OpenAI-compatible chat API with your own key: Gemini, OpenAI, Anthropic, Groq, Ollama, ...
@@ -468,41 +468,6 @@ def compile_table(name, tables_dir="tables", decide=None):
     return table
 
 
-# ------------------------------------------------------------------ worker-process entry points
-_chain = []
-
-
-def worker_init(names):
-    """Build the fallback chain, e.g. ("laya", "http", "rules"). Backends that fail to load are skipped."""
-    for name in names:
-        try:
-            _chain.append((name, BACKENDS[name]()))
-        except Exception as e:  # missing package, no VRAM headroom, no JEV_URL
-            print(f"[system1] {name} unavailable: {type(e).__name__}: {e}", flush=True)
-    if not any(n == "rules" for n, _ in _chain):
-        _chain.append(("rules", rules_backend()))
-
-
-_cache = {}   # the worded state space is finite (a few thousand keys) and models are deterministic
-
-
-def worker_decide(state):
-    key = tuple(state.values())
-    if key in _cache:
-        return _cache[key]._replace(ms=0.0)
-    for name, fn in list(_chain):
-        try:
-            d = fn(state)
-            if name != "rules":          # don't let an outage's fallback answer stick
-                _cache[key] = d
-            return d
-        except Exception as e:
-            print(f"[system1] {name} failed: {type(e).__name__}: {e}", flush=True)
-            if name in ("laya", "synthetic"):   # OOM / CUDA error: don't retry a broken local model every tick
-                _chain.remove((name, fn))
-    raise RuntimeError("unreachable: rules backend cannot fail")
-
-
 if __name__ == "__main__" and "--compile" in sys.argv:    # python system1_engine.py --compile laya
     compile_table(sys.argv[sys.argv.index("--compile") + 1])
 elif __name__ == "__main__":
@@ -513,13 +478,12 @@ elif __name__ == "__main__":
     assert s == {"threat": "none", "odor": "banana", "odor_familiarity": "familiar", "odor_memory": "rewarded",
                  "home": "ahead, far", "moving": "no", "goal_seek": "none", "goal_avoid": "none",
                  "goal_heading": "none", "goal_rest": "no"}, s
-    worker_init(("rules",))
-    d = worker_decide(s)
+    rules = rules_backend()
+    d = rules(s)
     assert d.probs.index(max(d.probs)) == BEHAVIOURS.index("FORAGE") and 0 <= d.urgency <= 1
-    assert worker_decide(describe(out, loom=0.6, odor_names={}))[0][1] > 0.5     # FLEE under threat
+    assert rules(describe(out, loom=0.6, odor_names={})).probs[1] > 0.5           # FLEE under threat
     # goal-aware rules: a threat beats every goal; rest > home > forage; no goal = today's rules
     from goals import Goal
-    rules = rules_backend()
 
     def choice(state):
         p = rules(state).probs

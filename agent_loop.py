@@ -1,12 +1,13 @@
-"""Closed-loop agent: world -> fly circuits (every 15 ms tick) -> System 1 (async, own process) -> VNC.
+"""Closed-loop agent: world -> fly circuits (every 15 ms tick) -> System 1 (table lookup) -> VNC.
 
-The tick never waits on System 1. Decisions are latched into the brain's input vector when they
-arrive; between arrivals the VNC keeps executing the last blend, and the giant-fiber escape runs
-inside the tick regardless.
+The tick never waits on a model. System 1 decides by looking the worded state up in the model's
+precompiled table (rules on a miss); the model itself runs only in a filler process that completes the
+table in the background. Decisions are latched into the brain's input vector on the next tick, and the
+giant-fiber escape runs inside the tick regardless.
 
 Deliberately not asyncio: asyncio's timer on Windows overshoots a 13.5 ms sleep by up to 13 ms (p99,
 measured), which alone breaks the budget. The tick is a deadline loop (high-resolution sleep, then
-spin the last 1.5 ms); System 1 is still asynchronous, as a future from its own process.
+spin the last 1.5 ms); the table filler is a future from its own process.
 
     python agent_loop.py --tick-cpus 2,3 --system1-cpus 4-7                      # rules (default)
     python agent_loop.py --backends synthetic,rules --ticks 2000                 # Laya-shaped GPU load
@@ -26,7 +27,8 @@ import torch
 
 import fruit_fly_circuits as fc
 from goals import DEFAULT_GOAL, HEADINGS
-from system1_engine import describe, worker_decide, worker_init
+from system1_engine import (CHUNK, N_STATES, STALL_CHUNKS, append_table, base_key, compile_chunk, describe,
+                            filler_init, load_table, lookup, missing, rules_backend, table_path)
 
 
 # ------------------------------------------------------------------ CPU placement
@@ -71,9 +73,9 @@ def raise_priority():
         return False
 
 
-def _system1_process(backends, cpus):
+def _system1_process(model, cpus):
     pin(cpus)
-    worker_init(backends)
+    filler_init(model)
 
 
 # ------------------------------------------------------------------ toy world (sensors + physics)
@@ -157,19 +159,28 @@ class Sim:
     pacing, CPU pinning and stats belong to the caller (the CLI below, or serve.py)."""
 
     def __init__(self, device="cpu", n_kc=2000, backends=("rules",), system1_cpus=(), gyro_bias=0.0005,
-                 landmark_gain=0.02, wall=False):
+                 landmark_gain=0.02, wall=False, tables_dir="tables"):
         self.device, self.n_kc = device, n_kc
         self.gyro_bias, self.landmark_gain, self.wall = gyro_bias, landmark_gain, wall
         self.backends = tuple(backends)
-        if self.backends == ("rules",):
-            worker_init(self.backends)
-            self.pool = None
+        # System 1 decides by lookup: the first model backend's precompiled table, rules on a miss.
+        # The model itself only runs in the filler process, one chunk at a time, until the table is full.
+        self.rules = rules_backend()
+        self.model = next((b for b in self.backends if b != "rules"), None)
+        self.path = table_path(self.model, tables_dir) if self.model else None
+        self.table = load_table(self.path, self.model) if self.path else {}
+        self.pool, self.fill, self.fill_streak = None, None, 0
+        if self.path is None:
+            self.table_status = "off"
+        elif len(self.table) >= N_STATES:
+            self.table_status = "complete"              # no worker, no model load, no VRAM
         else:
-            self.pool = ProcessPoolExecutor(1, initializer=_system1_process, initargs=(self.backends, system1_cpus))
+            self.table_status = "filling"
+            self.pool = ProcessPoolExecutor(1, initializer=_system1_process, initargs=(self.model, system1_cpus))
+            self._next_chunk()
         self.goal = DEFAULT_GOAL
         self.tick_stats = (0.0, 0.0)                    # (p50, p99) tick period, written by the pacing loop
         self.reset()
-        self._submit(describe(self.brain.out, 0.0, self.names)).result()   # load models before the clock starts
 
     def reset(self):
         self.brain = fc.FlyBrain(n_kc=self.n_kc, device=self.device)
@@ -187,7 +198,7 @@ class Sim:
         self.graph = self.brain.capture()
         self.tick, self.fwd, self.turn = 0, 0.0, 0.0
         self.pending, self.pending_state, self.last_key, self.t_sent = None, None, None, 0.0
-        self.s1_ms, self.s1_age, self.backends_used = [], [], {}
+        self.lookup_us, self.s1_age, self.backends_used, self.decided_by = [], [], {}, "none"
         self.set_goal(self.goal)
 
     def set_goal(self, goal):
@@ -204,11 +215,43 @@ class Sim:
         self.world.launch_predator(self.tick, bearing)
 
     def _submit(self, state):
-        return self.pool.submit(worker_decide, state) if self.pool else _Done(worker_decide(state))
+        t0 = time.perf_counter()
+        d = lookup(state, self.table, self.rules)
+        self.lookup_us.append((time.perf_counter() - t0) * 1e6)
+        return _Done(d)
+
+    def _next_chunk(self):
+        self.fill = self.pool.submit(compile_chunk, missing(self.table)[:CHUNK])
+
+    def _poll_fill(self):
+        """Merge a finished chunk and ask for the next; never waits on the filler."""
+        if self.fill is None or not self.fill.done():
+            return
+        try:
+            res = self.fill.result()
+        except Exception as e:                          # the worker process died
+            print(f"[system1] filler failed: {type(e).__name__}: {e}", flush=True)
+            res = None
+        self.fill = None
+        good = [(s, d) for s, d in res or () if d is not None]
+        if good:
+            append_table(self.path, good)               # ponytail: file write on the tick thread, once per chunk
+            self.table.update((base_key(s), d._replace(backend=f"{self.model} table")) for s, d in good)
+        self.fill_streak = 0 if good else self.fill_streak + 1
+        if res is None:
+            self.table_status = "off"
+        elif len(self.table) >= N_STATES:
+            self.table_status = "complete"
+        elif self.fill_streak >= STALL_CHUNKS:
+            self.table_status = "stalled"
+        else:
+            return self._next_chunk()
+        self.pool.shutdown(wait=False)                  # done with the model: free its VRAM
 
     def step(self):
         brain, world = self.brain, self.world
         world.sense(self.tick, brain.inp, self.fwd, self.turn)
+        self._poll_fill()
         out = brain.tick()
         self.fwd, self.turn = float(out[fc.OUT_FWD]), float(out[fc.OUT_TURN])
         state = describe(out, world.loom, self.names, self.goal)
@@ -220,7 +263,7 @@ class Sim:
                 brain.inp[fc.IN_P_BEHAVIOUR:fc.IN_P_BEHAVIOUR + 4] = torch.tensor(d.probs)
                 brain.inp[fc.IN_URGENCY] = d.urgency
                 brain.inp[fc.IN_P_JUMP] = d.p_jump
-                self.s1_ms.append(d.ms)
+                self.decided_by = d.backend
                 self.s1_age.append((time.perf_counter() - self.t_sent) * 1e3)
                 self.backends_used[d.backend] = self.backends_used.get(d.backend, 0) + 1
             else:
@@ -238,6 +281,8 @@ class Sim:
             "probs": dict(zip(fc.BEHAVIOURS, probs)), "behaviour": fc.BEHAVIOURS[probs.index(max(probs))],
             "jump": bool(out[fc.OUT_JUMP]), "odor": state["odor"], "home": {"x": 0.0, "y": 0.0},
             "loom": world.loom, "sources": {n: src.tolist() for n, (src, _, _) in world.sources.items()},
+            "table": {"backend": self.model or "rules", "filled": len(self.table), "total": N_STATES,
+                      "status": self.table_status}, "decided_by": self.decided_by,
             "wall": WALL if world.wall else None, "tick_p50": self.tick_stats[0], "tick_p99": self.tick_stats[1],
         }
 
@@ -261,7 +306,7 @@ def run(args):
     torch.set_num_threads(1)                          # tiny ops; thread pools only add wake-up jitter
 
     sim = Sim(args.device, args.n_kc, tuple(args.backends.split(",")), parse_cpus(args.system1_cpus),
-              args.gyro_bias, args.landmark_gain)
+              args.gyro_bias, args.landmark_gain, tables_dir=args.tables_dir)
     gc.collect()
     gc.freeze()                                       # long-lived objects out of the collector's way
     period = args.tick_ms / 1000
@@ -296,15 +341,16 @@ def run(args):
 
     sim.close()
     vram = torch.cuda.max_memory_allocated() / 2**20 if args.device == "cuda" else 0.0
-    s1_ms, s1_age = sim.s1_ms, sim.s1_age
+    lookup_us, s1_age = sim.lookup_us, sim.s1_age
     print(f"device={args.device} graph={sim.graph} n_kc={args.n_kc} tick_cpus={tick_cpus or 'unpinned'} "
           f"high_priority={realtime} "
           f"backends={args.backends}")
     print(f"tick compute   p50 {pct(compute_ms, 50):.3f}  p99 {pct(compute_ms, 99):.3f}  max {max(compute_ms):.3f} ms")
     print(f"tick period    p50 {pct(period_ms, 50):.3f}  p99 {pct(period_ms, 99):.3f}  max {max(period_ms):.3f} ms"
           f"  overruns(>{args.tick_ms + 1:.0f} ms) {overruns}/{len(period_ms)}")
-    print(f"system1        calls {len(s1_ms)} {sim.backends_used}  model p50 {pct(s1_ms, 50):.2f}  "
-          f"p99 {pct(s1_ms, 99):.2f} ms  sent->latched p50 {pct(s1_age, 50):.2f}  p99 {pct(s1_age, 99):.2f}  max {max(s1_age, default=0):.2f} ms")
+    print(f"system1        decisions {len(lookup_us)} by {sim.backends_used}  lookup p50 {pct(lookup_us, 50):.1f}  "
+          f"p99 {pct(lookup_us, 99):.1f} us  sent->latched p50 {pct(s1_age, 50):.2f}  p99 {pct(s1_age, 99):.2f} ms  "
+          f"table {sim.model or 'rules'} {len(sim.table)}/{N_STATES} {sim.table_status}")
     print(f"behaviour      ticks {behaviour_ticks}  "
           f"jumps {jumps}  rewards {sorted(sim.world.rewarded)}  brain VRAM peak {vram:.1f} MB")
     print(f"compass        gyro bias {args.gyro_bias} rad/tick, landmark gain {args.landmark_gain}  "
@@ -323,6 +369,7 @@ def main():
     ap.add_argument("--tick-ms", type=float, default=15.0)
     ap.add_argument("--backends", default="rules",
                     help="fallback chain, e.g. laya,http,rules; see system1_engine.py and README 3b for why rules is default")
+    ap.add_argument("--tables-dir", default="tables", help="precompiled System 1 tables (see system1_engine.py)")
     ap.add_argument("--tick-cpus", default="", help="e.g. 2,3 (one P-core, both hyperthreads)")
     ap.add_argument("--system1-cpus", default="", help="e.g. 4-7 (other P-cores)")
     run(ap.parse_args())
@@ -382,6 +429,32 @@ def selfcheck():
     assert float(np.linalg.norm(sim.world.pos)) < 1.0, sim.world.pos
     for s in (sim,):
         s.close()
+
+    import tempfile
+    from system1_engine import Decision, N_STATES, all_states, append_table, table_path
+    with tempfile.TemporaryDirectory() as tmp:
+        full = [(st, Decision((0.25, 0.25, 0.25, 0.25), 0.5, 0.5, "laya", 40.0)) for st in all_states()]
+        append_table(table_path("laya", tmp), full)
+        sim = Sim(backends=("laya",), tables_dir=tmp)                   # complete_table_no_pool
+        assert sim.pool is None and sim.table_status == "complete" and "laya" not in sys.modules
+        sim.step()
+        snap = sim.step()
+        assert snap["decided_by"] == "laya table" and snap["table"] == \
+            {"backend": "laya", "filled": N_STATES, "total": N_STATES, "status": "complete"}, snap["table"]
+        sim.set_goal(parse("rest")[0])                                  # goal precedence: rules know goals
+        sim.step()
+        snap = sim.step()
+        assert snap["decided_by"] == "rules" and snap["behaviour"] == "IDLE", snap["decided_by"]
+        sim.close()
+        sim = Sim(backends=("laya",), tables_dir=tmp + "/empty")       # unavailable_model_is_off (no laya here)
+        assert sim.table_status == "filling"
+        t0 = time.perf_counter()
+        while sim.table_status == "filling" and time.perf_counter() - t0 < 60:
+            sim.step()
+        snap = sim.step()
+        assert sim.table_status == "off" and snap["decided_by"] == "rules", (sim.table_status, snap["decided_by"])
+        assert snap["table"]["status"] == "off" and snap["table"]["filled"] == 0
+        sim.close()
     print("agent_loop self-check OK")
 
 

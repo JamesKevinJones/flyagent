@@ -7,8 +7,8 @@ Backends, tried in order until one answers:
   synthetic  random-weight ModernBERT-large graph (same GPU cost as Laya, no download) + rule answers
   rules      deterministic fallback so the agent never stalls without a decision
 
-Runs in its own process (see agent_loop.py), so Laya's Python-heavy tokenisation never takes the
-GIL from the 15 ms tick.
+Models only run in the table filler (agent_loop.py starts it in its own process), so Laya's Python-heavy
+tokenisation never takes the GIL from the 15 ms tick, and a live decision is a dict lookup.
 """
 import hashlib
 import http.client
@@ -17,6 +17,7 @@ import json
 import math
 import os
 import re
+import sys
 import time
 import urllib.parse
 from pathlib import Path
@@ -401,6 +402,72 @@ def lookup(state, table, rules):
     return table.get(base_key(state)) or rules(state)
 
 
+# The filler: the only code that calls a model. It runs in agent_loop's worker process (or in-process for
+# --compile), one chunk at a time, so the tick only ever sees finished answers.
+CHUNK = 32
+STALL_CHUNKS = 5                                # consecutive chunks with no good answer: give up, rules cover
+_filler = None
+
+
+def filler_init(name):
+    global _filler
+    try:
+        _filler = BACKENDS[name]()
+    except Exception as e:                      # missing package, no VRAM headroom, no key
+        print(f"[system1] {name} unavailable: {type(e).__name__}: {e}", flush=True)
+        _filler = None
+
+
+def compile_chunk(states, decide=None):
+    """[(state, Decision or None)]; None for a failed or invalid answer. None overall if no model loaded."""
+    decide = decide or _filler
+    if decide is None:
+        return None
+    out = []
+    for state in states:
+        try:
+            d = decide(state)
+            ok = valid_answer({k: state[k] for k in BASE_KEYS}, d.probs, d.urgency, d.p_jump)
+        except Exception as e:
+            print(f"[system1] compile failed on {base_key(state)}: {type(e).__name__}: {e}", flush=True)
+            d, ok = None, False
+        out.append((state, d if ok else None))
+    return out
+
+
+def missing(table):
+    return [s for s in fill_order() if base_key(s) not in table]
+
+
+def compile_table(name, tables_dir="tables", decide=None):
+    """Fill a backend's table in-process until complete or stalled (the --compile CLI)."""
+    if decide is None:
+        filler_init(name)
+        decide = _filler
+        if decide is None:
+            return {}
+    path = table_path(name, tables_dir)
+    table = load_table(path, name)
+    todo = missing(table)
+    print(f"[system1] {path}: {len(table)}/{N_STATES} compiled, {len(todo)} to go", flush=True)
+    t0, streak, threats_done = time.perf_counter(), 0, False
+    for i in range(0, len(todo), CHUNK):
+        good = [(s, d) for s, d in compile_chunk(todo[i:i + CHUNK], decide) if d is not None]
+        append_table(path, good)
+        table.update((base_key(s), d._replace(backend=f"{name} table")) for s, d in good)
+        streak = 0 if good else streak + 1
+        if streak >= STALL_CHUNKS:
+            print(f"[system1] stalled after {STALL_CHUNKS} chunks with no answer", flush=True)
+            break
+        if not threats_done and all(s["threat"] == "none" for s in todo[i + CHUNK:i + CHUNK + 1]):
+            threats_done = True
+            print(f"[system1] threat states done at {time.perf_counter() - t0:.1f}s", flush=True)
+        if (i // CHUNK) % 10 == 9:
+            print(f"[system1] {len(table)}/{N_STATES} at {time.perf_counter() - t0:.1f}s", flush=True)
+    print(f"[system1] {len(table)}/{N_STATES} compiled in {time.perf_counter() - t0:.1f}s -> {path}", flush=True)
+    return table
+
+
 # ------------------------------------------------------------------ worker-process entry points
 _chain = []
 
@@ -436,7 +503,9 @@ def worker_decide(state):
     raise RuntimeError("unreachable: rules backend cannot fail")
 
 
-if __name__ == "__main__":
+if __name__ == "__main__" and "--compile" in sys.argv:    # python system1_engine.py --compile laya
+    compile_table(sys.argv[sys.argv.index("--compile") + 1])
+elif __name__ == "__main__":
     import torch
     out = torch.zeros(12)
     out[OUT_KC_ACTIVE], out[OUT_ODOR_MATCH], out[OUT_VALENCE], out[OUT_HOME_X] = 100, 0.9, 0.1, 40
@@ -562,4 +631,33 @@ if __name__ == "__main__":
     assert table_path("laya") != before
     QUESTIONS["jump"]["instructions"] = QUESTIONS["jump"]["instructions"][:-1]
     assert table_path("laya") == before
+    calls = []                                             # the filler: failures stay missing, never rules
+
+    def stub(state):
+        calls.append(base_key(state))
+        if state["home"] == "behind, far":
+            raise TimeoutError("stub")
+        if state["home"] == "left, near":
+            return Decision((float("nan"),) * 4, 0.0, 0.0, "stub", 1.0)          # bad_answer_not_stored
+        return rules(state)._replace(backend="stub", ms=5.0)
+    res = compile_chunk(fill_order()[:32], decide=stub)
+    assert len(res) == 32 and all(d is None or d.backend == "stub" for _, d in res)
+    with tempfile.TemporaryDirectory() as tmp:
+        tbl = compile_table("synthetic", tmp, decide=stub)
+        bad = [st for st in all_states() if st["home"] in ("behind, far", "left, near")]
+        assert len(tbl) == N_STATES - len(bad) and all(base_key(st) not in tbl for st in bad)
+        assert len(load_table(table_path("synthetic", tmp), "synthetic")) == len(tbl)
+        calls.clear()                                      # resume_fills_only_missing (the model is back up)
+
+        def healed(state):
+            calls.append(base_key(state))
+            return rules(state)._replace(backend="stub", ms=5.0)
+        assert len(compile_table("synthetic", tmp, decide=healed)) == N_STATES
+        assert sorted(calls) == sorted(base_key(st) for st in bad)
+        calls.clear()                                      # stall after 5 empty chunks
+
+        def broken(state):
+            calls.append(1)
+            raise TimeoutError("down")
+        assert compile_table("synthetic", tmp + "/stall", decide=broken) == {} and len(calls) == STALL_CHUNKS * CHUNK
     print("self-check OK", s)

@@ -1,6 +1,6 @@
 # Project State
 
-**Last updated:** 2026-10-06 by claude-code
+**Last updated:** 2026-10-07 by claude-code
 
 ## Where things stand
 
@@ -24,14 +24,26 @@ goal page.
 - A fresh-reviewer pass found 4 Important issues, all fixed with tests. The 10 deferred minors are listed below.
 - Spec and plan: `docs/superpowers/specs/2026-10-06-precompiled-system1-design.md`, `docs/superpowers/plans/2026-10-06-precompiled-system1.md`.
 
+**Real wiring (sub-project 3 of 3)** is built on branch `feat/hemibrain-wiring`, not merged yet:
+- `--wiring hemibrain` runs the mushroom body and compass on Janelia hemibrain v1.2 wiring (CC BY), from the committed
+  102 KB `data/hemibrain_mb_cx.npz`; `hemibrain.py` rebuilds it.
+- The real mushroom body works (valence 0.224 / −0.165) but separates unrelated odors worse (KC overlap 0.227 vs 0.033).
+- The per-neuron compass failed rotation gain (it tops out at about 60°/s), so the agent uses the spec's fallback, a
+  ring with a kernel derived from the real wiring. That ring misses rotation gain only at the slowest speed (0.879
+  vs 0.9).
+- The default stays synthetic. Numbers are in README 3g and `docs/eval-connectome-2026-10-06.txt`.
+- Spec and plan: `docs/superpowers/specs/2026-10-06-hemibrain-wiring-design.md`,
+  `docs/superpowers/plans/2026-10-06-hemibrain-wiring.md`.
+
 ## In progress
 
-- Nothing half-done.
+- Finishing `feat/hemibrain-wiring` (final review, then merge). Nothing half-done in the code.
 
 ## The exact next step
 
-Sub-project 2 is merged and pushed. Next, Kevin sets the `CLAUDE_API_KEY` CI secret (`gh secret set CLAUDE_API_KEY --repo JamesKevinJones/flyagent`).
-Then brainstorm sub-project 3 (full connectome).
+Merge `feat/hemibrain-wiring` after its final review. Before pushing, run `/security-review`. Kevin sets the `CLAUDE_API_KEY` CI secret (`gh secret set CLAUDE_API_KEY --repo JamesKevinJones/flyagent`).
+All three sub-projects are then done. Possible follow-ups (not planned): a per-neuron compass with faster dynamics
+(e.g. a shorter time constant or the ring neurons' input), the other hemisphere, FlyWire if its licence suits.
 
 Deferred minors from the sub-project 2 review:
 - `close()` blocks on an in-flight chunk (up to about 160 s for an LLM) and discards it.

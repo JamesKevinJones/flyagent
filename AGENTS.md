@@ -19,10 +19,12 @@ them up. README.md holds the measured tradeoff matrix and tuning guide.
 - `fruit_fly_circuits.py`: `FlyBrain`. Fixed-shape tensor program; `IN_*` / `OUT_*` index the pinned I/O vectors
 - `system1_engine.py`: `describe()` (circuit state to words), backends, precompiled tables (file, lookup, filler, `--compile`)
 - `tables/`: compiled model answers, gitignored; the measured Laya and Qwen3-4B tables are force-added
+- `hemibrain.py`: compiles `data/hemibrain_mb_cx.npz` from the Janelia hemibrain v1.2 archive (CC BY; `data/DATA_LICENSE`). Runtime never imports it
+- `hemibrain_circuits.py`: `--wiring hemibrain` circuits: real mushroom body (`HemibrainMB`), per-neuron compass (`HemibrainCX`, measured only) and the derived ring kernel the agent uses
 - `agent_loop.py`: `Sim` (one tick of work, goal compilation), toy `World`, the CLI's deadline loop, pinning, stats
 - `goals.py`: `Goal`, the parser, LLM interpretation (`interpret`, `make_llm`)
 - `serve.py` + `web/index.html`: the local goal page (stdlib server, SSE, one static file)
-- `eval_goals.py`, `eval_system1.py`: measurements behind README 3b, 3e and 3f (`--latency`)
+- `eval_goals.py`, `eval_system1.py`, `eval_connectome.py`: measurements behind README 3b, 3e, 3f (`--latency`) and 3g (`--tune-cx` too)
 
 ## Rules
 

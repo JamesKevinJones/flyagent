@@ -4,6 +4,33 @@ Append-only. Newest at the top.
 
 ---
 
+## 2026-10-06: Real wiring from the hemibrain connectome, behind `--wiring hemibrain`
+
+**Context.** Sub-project 3 (spec: docs/superpowers/specs/2026-10-06-hemibrain-wiring-design.md). The goal was to
+replace the hand-built mushroom body and compass with measured wiring, then measure what changes.
+**Decision.**
+- **Data.** `hemibrain.py` compiles Janelia hemibrain v1.2 (CC BY 4.0, a public 45.9 MB archive) once into
+  `data/hemibrain_mb_cx.npz`, which is 102 KB and committed with `data/DATA_LICENSE`. Runtime reads only that file.
+- **Mushroom body.** 63 real glomerulus inputs, 1,927 real KCs, and the real KC→MBON synapses onto 68 MBONs.
+  - Each MBON's valence sign is `(PPL1 − PAM)/(PPL1 + PAM)` of its measured dopamine input (Aso et al. 2014:
+    reward through PAM depresses avoidance MBONs).
+  - On the right, fully traced side, this agrees with the literature for MBON01–03 (avoidance) and MBON11 and 14
+    (approach).
+- **Compass map.** The bridge-to-compass angle map was chosen from the data: of the candidate maps, it's the one
+  under which the real PEN→EPG wiring shifts the bump by one wedge in opposite directions per side.
+- **Compass model.** One rate unit per real neuron forms a bump and holds it, but fails the rotation-gain test: the
+  bump moves at most about 60°/s. So the agent uses the spec's fallback, today's ring with its kernel derived from
+  the same wiring. That ring misses rotation gain only at the slowest speed (0.88 vs 0.9).
+**Why not FlyWire, or a whole-brain spiking model.** FlyWire is CC BY-NC. A whole-brain model's behaviour claim
+would rest on guessing which neurons to read out.
+**Consequences.**
+- `--wiring synthetic` stays the default, and the regression oracle is unchanged.
+- System 1 tables stay valid, because `describe()` emits the same words.
+- Under hemibrain wiring the compass pins to wedges, so slow turns under-rotate about 12% and a tiny gyro bias never
+  accumulates (README 3g).
+
+---
+
 ## 2026-10-06: Model System 1s are precompiled into tables; the tick only looks them up
 
 **Context.** A model answering a new state live took about 300 ms (Laya, GPU waking from P8) to 5 s (local

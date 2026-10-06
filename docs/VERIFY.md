@@ -38,6 +38,19 @@ Expected: the CPU-only run prints `table laya 1938/1938 complete`, `by {'laya ta
 import Laya. `--latency` prints a lookup p50 of a few µs, and the table's loom latch is 7 ticks, the same as
 rules. To check that tables don't change the default, re-run the regression oracle above.
 
+## Hemibrain wiring
+
+```bash
+"$PY" hemibrain.py --selfcheck      # committed .npz: counts, MBON signs, compass angles; refuses a truncated archive
+"$PY" fruit_fly_circuits.py         # both wirings; hemibrain: valence 0.224 / -0.157, compass rotation gain 0.879 / 0.987 / 1.004
+"$PY" agent_loop.py --selfcheck     # also: hemibrain fly reaches the banana, flees, keeps its wiring across reset
+"$CPY" eval_connectome.py --runs 3  # README 3g numbers (docs/eval-connectome-2026-10-06.txt)
+"$PY" serve.py --wiring hemibrain   # page shows "Wiring: Janelia hemibrain v1.2 (CC BY)"
+```
+
+`python hemibrain.py` rebuilds the file (downloads 45.9 MB once into `.deps/hemibrain/`). The synthetic regression
+oracle above must not change.
+
 ## Closed loop under System-1 GPU load
 
 ```bash

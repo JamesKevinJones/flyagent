@@ -208,14 +208,14 @@ def llm_config():
     return url, key, model, float(env.get("LLM_TIMEOUT", "5"))
 
 
-def llm_backend():
+def llm_backend(timeout=None):
     """System 1 through any OpenAI-compatible chat API (see llm_config for the env vars).
-    The reply is untrusted: anything but the expected JSON raises, and the chain falls back to rules."""
+    The reply is untrusted: anything but the expected JSON raises, and the state stays uncompiled."""
     config = llm_config()
     if config is None:
         raise RuntimeError("set GEMINI_API_KEY, or LLM_BASE_URL + LLM_MODEL (+ LLM_API_KEY)")
-    url, key, model, timeout = config
-    base, post = _poster(url, key, timeout)
+    url, key, model, live_timeout = config
+    base, post = _poster(url, key, timeout or live_timeout)
 
     def decide(state):
         t0 = time.perf_counter()
@@ -411,8 +411,14 @@ _filler = None
 
 def filler_init(name):
     global _filler
+    env = os.environ                            # off the tick, so wait far longer than a live call would
     try:
-        _filler = BACKENDS[name]()
+        if name == "llm":
+            _filler = llm_backend(timeout=float(env.get("LLM_FILL_TIMEOUT", "60")))
+        elif name == "http":
+            _filler = http_backend(env.get("JEV_URL"), env.get("JEV_API_KEY"), float(env.get("JEV_FILL_TIMEOUT", "10")))
+        else:
+            _filler = BACKENDS[name]()
     except Exception as e:                      # missing package, no VRAM headroom, no key
         print(f"[system1] {name} unavailable: {type(e).__name__}: {e}", flush=True)
         _filler = None
@@ -520,6 +526,8 @@ elif __name__ == "__main__":
 
         def do_POST(self):
             seen.append((self.path, self.client_address[1], self.headers.get("Authorization")))
+            if self.path.startswith("/slow"):                           # slower than the live timeouts
+                time.sleep(0.6)
             req = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             if self.path.endswith("/chat/completions"):            # OpenAI-compatible: fenced JSON, unnormalised
                 assert req["model"] == "m" and json.loads(req["messages"][1]["content"]) == s
@@ -555,6 +563,22 @@ elif __name__ == "__main__":
         llm_backend()
     finally:
         del os.environ["GEMINI_API_KEY"]
+    # the filler waits longer than the live path (final review): live calls time out, fill calls don't
+    os.environ.update(LLM_BASE_URL=f"http://127.0.0.1:{srv.server_port}/slow/v1", LLM_MODEL="m", LLM_TIMEOUT="0.2",
+                      JEV_URL=f"http://127.0.0.1:{srv.server_port}/slow")
+    try:
+        for name, live in (("llm", llm_backend), ("http", lambda: http_backend(os.environ["JEV_URL"], None))):
+            try:
+                live()(s)
+                raise AssertionError(f"live {name} should time out")
+            except TimeoutError:
+                pass
+            filler_init(name)
+            assert _filler(s).backend == name, name
+    finally:
+        for k in ("LLM_BASE_URL", "LLM_MODEL", "LLM_TIMEOUT", "JEV_URL"):
+            del os.environ[k]
+        _filler = None
     srv.shutdown()
     # precompiled tables: the state space, the file, goal precedence, identity
     import tempfile

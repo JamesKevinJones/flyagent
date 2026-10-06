@@ -10,8 +10,8 @@ measured), which alone breaks the budget. The tick is a deadline loop (high-reso
 spin the last 1.5 ms); the table filler is a future from its own process.
 
     python agent_loop.py --tick-cpus 2,3 --system1-cpus 4-7                      # rules (default)
-    python agent_loop.py --backends synthetic,rules --ticks 2000                 # Laya-shaped GPU load
-    PYTHONPATH=.deps python agent_loop.py --backends laya,rules                  # real Laya, opt-in
+    python agent_loop.py --backends synthetic --tables-dir <empty dir>          # Laya-shaped GPU load while filling
+    PYTHONPATH=.deps python agent_loop.py --backends laya                        # Laya's table (fills if incomplete)
     python agent_loop.py --device cuda --n-kc 50000                              # big MB: GPU earns its keep
 """
 import argparse
@@ -169,7 +169,7 @@ class Sim:
         self.model = next((b for b in self.backends if b != "rules"), None)
         self.path = table_path(self.model, tables_dir) if self.model else None
         self.table = load_table(self.path, self.model) if self.path else {}
-        self.pool, self.fill, self.fill_streak = None, None, 0
+        self.pool, self.fill, self.fill_streak, self.failed, self.write_error = None, None, 0, set(), False
         if self.path is None:
             self.table_status = "off"
         elif len(self.table) >= N_STATES:
@@ -221,7 +221,12 @@ class Sim:
         return _Done(d)
 
     def _next_chunk(self):
-        self.fill = self.pool.submit(compile_chunk, missing(self.table)[:CHUNK])
+        """Submit the next CHUNK states not yet answered, skipping ones that already failed this session
+        (or they'd fill every chunk and stall the table). False when nothing is left to ask."""
+        todo = [s for s in missing(self.table) if base_key(s) not in self.failed][:CHUNK]
+        if todo:
+            self.fill = self.pool.submit(compile_chunk, todo)
+        return bool(todo)
 
     def _poll_fill(self):
         """Merge a finished chunk and ask for the next; never waits on the filler."""
@@ -234,18 +239,24 @@ class Sim:
             res = None
         self.fill = None
         good = [(s, d) for s, d in res or () if d is not None]
+        self.failed.update(base_key(s) for s, d in res or () if d is None)
         if good:
-            append_table(self.path, good)               # ponytail: file write on the tick thread, once per chunk
+            try:
+                append_table(self.path, good)           # ponytail: file write on the tick thread, once per chunk
+            except OSError as e:                        # locked or read-only file: it's only a cache, keep going
+                if not self.write_error:
+                    print(f"[system1] can't save {self.path}: {e}", flush=True)
+                self.write_error = True
             self.table.update((base_key(s), d._replace(backend=f"{self.model} table")) for s, d in good)
         self.fill_streak = 0 if good else self.fill_streak + 1
         if res is None:
             self.table_status = "off"
         elif len(self.table) >= N_STATES:
             self.table_status = "complete"
-        elif self.fill_streak >= STALL_CHUNKS:
-            self.table_status = "stalled"
+        elif self.fill_streak < STALL_CHUNKS and self._next_chunk():
+            return
         else:
-            return self._next_chunk()
+            self.table_status = "stalled"
         self.pool.shutdown(wait=False)                  # done with the model: free its VRAM
 
     def step(self):
@@ -446,7 +457,8 @@ def selfcheck():
         snap = sim.step()
         assert snap["decided_by"] == "rules" and snap["behaviour"] == "IDLE", snap["decided_by"]
         sim.close()
-        sim = Sim(backends=("laya",), tables_dir=tmp + "/empty")       # unavailable_model_is_off (no laya here)
+        os.environ.pop("JEV_URL", None)                                 # unavailable_model_is_off, in any env:
+        sim = Sim(backends=("http",), tables_dir=tmp + "/empty")       # http can't load without JEV_URL
         assert sim.table_status == "filling"
         t0 = time.perf_counter()
         while sim.table_status == "filling" and time.perf_counter() - t0 < 60:
@@ -454,6 +466,30 @@ def selfcheck():
         snap = sim.step()
         assert sim.table_status == "off" and snap["decided_by"] == "rules", (sim.table_status, snap["decided_by"])
         assert snap["table"]["status"] == "off" and snap["table"]["filled"] == 0
+        sim.close()
+        # fill_skips_failed_states + write_error_keeps_ticking (final review): an in-process filler stands in
+        # for the worker, since a stub can't cross a Windows spawn
+        import system1_engine as s1
+        from concurrent.futures import ThreadPoolExecutor
+        rules = s1.rules_backend()
+        bad = {s1.base_key(st) for st in all_states() if st["home"] in ("behind, far", "left, near")}
+
+        def flaky(state):
+            if s1.base_key(state) in bad:
+                raise TimeoutError("stub")
+            return rules(state)
+        sim = Sim(backends=("http",), tables_dir=tmp + "/flaky")
+        while sim.table_status == "filling":
+            sim.step()
+        s1._filler = flaky
+        sim.pool, sim.table_status = ThreadPoolExecutor(1), "filling"
+        os.makedirs(sim.path)                                           # the table file can't be written
+        sim._next_chunk()
+        t0 = time.perf_counter()
+        while sim.table_status == "filling" and time.perf_counter() - t0 < 60:
+            sim.step()
+        assert len(sim.table) == N_STATES - len(bad) and sim.table_status == "stalled", (len(sim.table), sim.table_status)
+        s1._filler = None
         sim.close()
     print("agent_loop self-check OK")
 

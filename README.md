@@ -149,7 +149,9 @@ instead of 0.70, about 90 ms earlier.
 ## 3. Measured closed-loop results
 
 `python agent_loop.py --backends synthetic,rules --ticks 2000 --tick-cpus 2,3 --system1-cpus 4-7`
-(the "synthetic" backend is Laya-shaped GPU load, so the loop is measured under contention):
+(the "synthetic" backend is Laya-shaped GPU load, so the loop is measured under contention). These numbers
+predate precompiled tables (3f): a model now loads the GPU only while its table fills, so to repeat this
+measurement, add `--tables-dir` with an empty directory.
 
 | Circuits on | Tick compute p50 / p99 | Tick period p50 / p99 | Overruns > 16 ms |
 |---|---|---|---|

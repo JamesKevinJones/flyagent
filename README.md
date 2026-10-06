@@ -12,6 +12,12 @@ and Kenyon-cell frames are real `FlyBrain` output. Music: "Happy Beats / Busines
 
 ## Try it: type a goal, watch the fly pursue it
 
+https://github.com/user-attachments/assets/4456cbb3-33f6-4ece-a9bd-01aea2dee18d
+
+*28 seconds, recorded against the real server: default foraging, "avoid the smell and head north",
+"go home", a predator (FLEE and the escape jump), a messy phrase read by a local LLM, then "rest".
+Source file: [docs/media/goals.mp4](docs/media/goals.mp4).*
+
 ```bash
 python -m venv .venv                  # Windows: .venv\Scripts\activate   macOS/Linux: source .venv/bin/activate
 pip install torch --index-url https://download.pytorch.org/whl/cpu   # CPU build is enough for the demo
@@ -372,7 +378,6 @@ measurable cost.
 
 ## Not done, and what it takes
 
-- **A README clip of the goal page:** record it, then upload it inline like the brag video.
 - **LLM goal merging:** the LLM's answer currently replaces the parser's. Keeping the parser's items and
   letting the LLM only add to them would fix the paraphrase regression in 3e.
 

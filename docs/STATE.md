@@ -28,10 +28,10 @@ and (3) a full connectome.
 
 ## The exact next step
 
-Free-text goals are merged and pushed (2026-10-05). Next: record a clip of the goal page and upload it
-inline like the brag video (needs Kevin's go-ahead for the Chrome upload); Kevin sets the
-`CLAUDE_API_KEY` CI secret (`gh secret set CLAUDE_API_KEY --repo JamesKevinJones/flyagent`); then
-brainstorm sub-project 2 (fast System 1 on novel states).
+Free-text goals are merged, pushed, and shown in the README by an inline clip (2026-10-06; source in
+`docs/media/goals.mp4`). Next: Kevin sets the `CLAUDE_API_KEY` CI secret
+(`gh secret set CLAUDE_API_KEY --repo JamesKevinJones/flyagent`), then brainstorm sub-project 2
+(fast System 1 on novel states).
 
 Deferred minors from the final review: a malformed Content-Length isn't rejected cleanly; an
 overlong goal can cancel one still being interpreted; no crash guard in the sim thread; LLM reply

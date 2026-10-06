@@ -99,6 +99,7 @@
         <div>
           <div class="bars" id="bars"></div>
           <p class="jump" id="jump">escape reflex: ready</p>
+          <p class="jump" id="s1">System 1: rules</p>
         </div>
       </div>
     </section>
@@ -153,6 +154,13 @@ function updatePanels(s) {
   const j = $("jump");
   j.textContent = s.jump ? "escape reflex: JUMP" : s.loom > 0 ? "escape reflex: predator looming" : "escape reflex: ready";
   j.classList.toggle("fired", s.jump || s.loom > 0);
+  const t = s.table, n = (x) => x.toLocaleString("en-US");
+  const s1 = t.backend === "rules" ? "System 1: rules"
+    : t.status === "complete" ? `System 1: ${t.backend} table complete`
+    : t.status === "filling" ? `System 1: ${t.backend} table ${n(t.filled)} / ${n(t.total)}, rules cover the rest`
+    : t.status === "stalled" ? `System 1: ${t.backend} table stalled at ${n(t.filled)} / ${n(t.total)}, rules cover the rest`
+    : `System 1: ${t.backend} unavailable, rules`;
+  if ($("s1").textContent !== s1) $("s1").textContent = s1;
   $("ticks").textContent = `tick period p50 ${s.tick_p50.toFixed(2)} · p99 ${s.tick_p99.toFixed(2)} ms`;
 }
 

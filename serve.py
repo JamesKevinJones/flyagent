@@ -188,13 +188,16 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--port", type=int, default=8765)
     ap.add_argument("--device", default="cpu")
+    ap.add_argument("--backends", default="rules", help="System 1 chain, e.g. laya,rules (README 3f)")
+    ap.add_argument("--tables-dir", default="tables")
     args = ap.parse_args()
-    sim = Sim(device=args.device, wall=True)
+    sim = Sim(device=args.device, backends=tuple(args.backends.split(",")), wall=True, tables_dir=args.tables_dir)
     runner = SimRunner(sim)
     llm = make_llm()
     server = make_server(sim, args.port, llm, runner)
     runner.start()
-    print(f"flyagent: http://127.0.0.1:{args.port}   (goal interpreter: parser{' + LLM' if llm else ' only'})")
+    print(f"flyagent: http://127.0.0.1:{args.port}   (goal interpreter: parser{' + LLM' if llm else ' only'}; "
+          f"System 1: {sim.model or 'rules'} table {len(sim.table)}/1938 {sim.table_status})")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

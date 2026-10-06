@@ -56,11 +56,13 @@ def _glomeruli(instance):
 
 
 def _theta(glomerulus):
-    """Bridge glomerulus -> compass angle. A stand-in for the published PB->EB map (Wolff et al. 2015): 45 degrees
-    per glomerulus, glomeruli 1 and 9 sharing an angle, the left bridge offset by half a step. A global rotation or
-    mirror of this map is absorbed by the angular-velocity gain's sign and by the landmark."""
-    k = int(glomerulus[1])
-    return math.radians(((k - 1) % 8) * 45 + (22.5 if glomerulus[0] == "L" else 0))
+    """Bridge glomerulus -> compass angle: 45 degrees per glomerulus (1 and 9 share an angle), the left bridge running
+    the other way from 45 degrees. Chosen from the data, not assumed: of the candidate maps (either direction, any
+    22.5-degree offset), this is the one under which the real PEN->EPG wiring shifts the bump by one wedge in opposite
+    directions per side (+22.4 / -22.3 degrees), as published (Turner-Evans et al. 2020). A global rotation or mirror
+    is absorbed by the angular-velocity gain's sign and by the landmark."""
+    k = (int(glomerulus[1]) - 1) % 8
+    return math.radians(45 - k * 45 if glomerulus[0] == "L" else k * 45)
 
 
 def derive(src_dir):
@@ -139,7 +141,7 @@ def selfcheck(path=DATA_PATH):
     assert np.isfinite(d["cx_theta"]).all()
     epg = np.sort(d["cx_theta"][d["cx_types"] == "EPG"] % (2 * math.pi))
     gaps = np.diff(np.concatenate([epg, epg[:1] + 2 * math.pi]))
-    assert gaps.max() < math.radians(45), math.degrees(gaps.max())
+    assert gaps.max() <= math.radians(45) + 1e-4, math.degrees(gaps.max())   # 8 tiles, L and R EPGs per tile
     assert json.loads(str(d["meta"][0]))["attribution"] == ATTRIBUTION
     with tempfile.TemporaryDirectory() as tmp:                 # wrong_size_refused: a truncated archive
         (Path(tmp) / ARCHIVE_URL.rsplit("/", 1)[1]).write_bytes(b"0123456789")

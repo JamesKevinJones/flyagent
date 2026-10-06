@@ -3,8 +3,9 @@
 A hybrid agent for one laptop (Acer Nitro V 15: i5-13420H, RTX 4050 6 GB, 16 GB RAM). A
 *Drosophila* circuit model (central complex ring attractor + path integration, mushroom-body
 sparse expansion, VNC CPG + giant-fiber escape) runs at a fixed 15 ms tick. A typed System-1
-decision model (Laya local, TypeSafe Jev hosted, rules fallback) chooses behaviour
-asynchronously in its own process. README.md holds the measured tradeoff matrix and tuning guide.
+decision model (Laya local, TypeSafe Jev hosted, any LLM, rules fallback) chooses behaviour. Model
+answers are precompiled into per-model tables filled by a background process; the tick only looks
+them up. README.md holds the measured tradeoff matrix and tuning guide.
 
 ## Stack
 
@@ -16,11 +17,12 @@ asynchronously in its own process. README.md holds the measured tradeoff matrix 
 ## Layout
 
 - `fruit_fly_circuits.py`: `FlyBrain`. Fixed-shape tensor program; `IN_*` / `OUT_*` index the pinned I/O vectors
-- `system1_engine.py`: `describe()` (circuit state to words), backends, worker-process entry points
+- `system1_engine.py`: `describe()` (circuit state to words), backends, precompiled tables (file, lookup, filler, `--compile`)
+- `tables/`: compiled model answers, gitignored; the measured Laya and Qwen3-4B tables are force-added
 - `agent_loop.py`: `Sim` (one tick of work, goal compilation), toy `World`, the CLI's deadline loop, pinning, stats
 - `goals.py`: `Goal`, the parser, LLM interpretation (`interpret`, `make_llm`)
 - `serve.py` + `web/index.html`: the local goal page (stdlib server, SSE, one static file)
-- `eval_goals.py`, `eval_system1.py`: measurements behind README 3b and 3e
+- `eval_goals.py`, `eval_system1.py`: measurements behind README 3b, 3e and 3f (`--latency`)
 
 ## Rules
 

@@ -4,6 +4,29 @@ Append-only. Newest at the top.
 
 ---
 
+## 2026-10-06: Model System 1s are precompiled into tables; the tick only looks them up
+
+**Context.** A model answering a new state live took about 300 ms (Laya, GPU waking from P8) to 5 s (local
+Qwen3-4B), and neither latched FLEE inside the 450 ms loom. `describe()` can only emit 1,938 base states
+(spec: docs/superpowers/specs/2026-10-06-precompiled-system1-design.md).
+**Decision.**
+- The first model named in `--backends` owns a table, `tables/<backend>-<slug>-<hash8>.jsonl`. It's filled
+  in the background by the old worker process, threat states first, and saved as it goes.
+- `Sim` looks each state up in a dict in its own process; a miss is answered by rules.
+- A complete table starts no worker and loads no model.
+- Under any goal, non-threat states are decided by rules, because the models were never asked about goals.
+- The measured Laya and Qwen3-4B tables are committed (`git add -f`); `tables/` is otherwise gitignored.
+**Why not keep the model live with a cache.** The cache only helps on a second visit, and the first visit
+is the one the predator punishes. Looking up over IPC would also cost about a millisecond, not microseconds.
+**Why one table per run, not per loaded backend.** The file has to be known before the model loads, or a
+complete table couldn't skip the model.
+**Consequences.**
+- The "System 1 runs in its own process" entry below now describes the filler only.
+- A model's policy shows only on threats and with no goal set.
+- A change to `describe()`'s vocabulary needs the old tables deleted by hand.
+
+---
+
 ## 2026-10-05: One generic `llm` backend for every provider key
 
 **Context.** The repo goes public, and anyone cloning it should be able to plug in their own key

@@ -1,6 +1,6 @@
 # Project State
 
-**Last updated:** 2026-10-05 by claude-code
+**Last updated:** 2026-10-06 by claude-code
 
 ## Where things stand
 
@@ -8,34 +8,51 @@ Public at https://github.com/JamesKevinJones/flyagent (`main`). All modules pass
 CPU and CUDA. Defaults follow the README measurements: System 1 = `rules`, circuits on the CPU,
 landmark-corrected compass with a simulated 2°/s gyro bias. Opt-in System 1 backends: `laya`
 (installed in `.deps/`), `http` (Jev / laya-serve), `llm` (any OpenAI-compatible key, Gemini via
-`GEMINI_API_KEY` alone), `synthetic`. Laya lost every policy check to the rule table (README 3b);
-a local Qwen3-4B through `llm` was far more accurate than Laya but 1.7–5 s per decision (README 3d).
-The README opens with a 21 s brag video, served inline from a GitHub user-attachments URL, with the
-source file in `docs/media/brag.mp4`.
+`GEMINI_API_KEY` alone), `synthetic`. The README opens with a 21 s brag video and an inline clip of the
+goal page.
 
-**Free-text goals (sub-project 1 of 3)** are merged into `main` (2026-10-05), after a fresh-reviewer pass whose 7 Important findings were fixed:
-- `goals.py` holds the parser and the optional LLM.
-- `Sim.set_goal` compiles goals into the brain buffers and goal-aware rules.
-- `serve.py` + `web/index.html` serve the local page at http://127.0.0.1:8765.
-- `eval_goals.py` produces the README 3e numbers.
+**Free-text goals (sub-project 1 of 3)** are on `main`: `goals.py`, `Sim.set_goal`, `serve.py` +
+`web/index.html`, `eval_goals.py` (README 3e).
 
-Spec and plan are in `docs/superpowers/`. The next sub-projects are (2) fast System 1 on novel states
-and (3) a full connectome.
+**Precompiled System 1 (sub-project 2 of 3)** is built on branch `feat/precompiled-system1`, not merged yet:
+- A model backend's answers for all 1,938 states are compiled into `tables/<backend>-<slug>-<hash8>.jsonl`.
+  It's filled in the background, threat states first; the tick only looks answers up, and rules cover misses.
+- Committed tables: Laya (136 s to compile) and Qwen3-4B (57 min).
+- Measured results (README 3f):
+  - Decisions take 1–3 µs, against 44–159 ms for live Laya and 1.4 s for live Qwen, with the same choices.
+  - Laya's table latches FLEE in 7 ticks, like rules.
+- A fresh-reviewer pass found 4 Important issues, all fixed with tests. The 10 deferred minors are listed below.
+- Spec and plan: `docs/superpowers/specs/2026-10-06-precompiled-system1-design.md`, `docs/superpowers/plans/2026-10-06-precompiled-system1.md`.
 
 ## In progress
 
-- Nothing half-done.
+- Finishing the `feat/precompiled-system1` branch (merge or PR). Nothing half-done in the code.
 
 ## The exact next step
 
-Free-text goals are merged, pushed, and shown in the README by an inline clip (2026-10-06; source in
-`docs/media/goals.mp4`). Next: Kevin sets the `CLAUDE_API_KEY` CI secret
-(`gh secret set CLAUDE_API_KEY --repo JamesKevinJones/flyagent`), then brainstorm sub-project 2
-(fast System 1 on novel states).
+Merge `feat/precompiled-system1` into `main`. Before pushing, run `/security-review` on the pending diff.
+Then Kevin sets the `CLAUDE_API_KEY` CI secret (`gh secret set CLAUDE_API_KEY --repo JamesKevinJones/flyagent`).
+Then brainstorm sub-project 3 (full connectome).
 
-Deferred minors from the final review: a malformed Content-Length isn't rejected cleanly; an
-overlong goal can cancel one still being interpreted; no crash guard in the sim thread; LLM reply
-validation is stricter than needed; provider error text can reach the page; `World` only works via `Sim`.
+Deferred minors from the sub-project 2 review:
+- `close()` blocks on an in-flight chunk (up to about 160 s for an LLM) and discards it.
+- `missing()` and `append_table` cost about 6–10 ms on one tick per chunk; caching `fill_order()` would cut most of it.
+- The loader crashes on a non-UTF-8 table file.
+- A crash mid-write glues the next line on, so one state is re-asked forever.
+- The page says "unavailable, rules" while a partial table still decides.
+- A newly compiled answer for the current state isn't applied until the worded state changes.
+- `serve.py` and `--compile` on the same file can interleave lines and double the work.
+- `--compile`: `rules` or a missing name gives a traceback, a failed compile exits 0, and "threat states done" is wrong on resume.
+- Stale text: the `--backends` help says "fallback chain", and a `describe()` comment mentions the removed decision cache.
+- `latch_ticks` counts a latch on the loom's last tick as "never".
+
+Deferred minors from the sub-project 1 review:
+- A malformed Content-Length isn't rejected cleanly.
+- An overlong goal can cancel one still being interpreted.
+- The sim thread has no crash guard.
+- LLM reply validation is stricter than needed.
+- Provider error text can reach the page.
+- `World` only works via `Sim`.
 
 ## Open questions
 
@@ -46,14 +63,17 @@ validation is stricter than needed; provider error text can reach the page; `Wor
 
 ## Known traps
 
-- Single timing runs vary on Windows (one rules/CPU run had 173 overruns, the next two 5 and 7).
-  Judge tick timing over several runs.
+- Single timing runs vary on Windows (one rules/CPU run had 173 overruns, the next two 5 and 7); live Laya
+  p50 was 159, 96 and 44 ms in three back-to-back runs. Judge timing over several runs.
 - With `rules` (no GPU load), circuits on the CPU beat CUDA because the idle GPU wakes every tick.
 - `.venv` has CPU-only torch: `--device cuda`, Laya and `synthetic` need the ComfyUI env (CUDA torch). Plain `python` is the system 3.14 with no torch.
 - Anything that imports `laya` needs `PYTHONPATH=.deps`.
 - Laya's default load keeps FP32 weights (1.6 GB); `laya_backend` casts to bf16 *before* the VRAM cap.
 - After about 5 s idle the dGPU sits at P8, and the next model call costs 300+ ms.
-- Ollama's first request loads the model and can exceed `LLM_TIMEOUT` (5 s); that call falls back to rules.
+- Ollama's first request loads the model and can exceed `LLM_TIMEOUT` (5 s, live goal interpretation). The
+  table filler uses `LLM_FILL_TIMEOUT` (60 s) and `JEV_FILL_TIMEOUT` (10 s) instead.
+- A table's filename hash includes `LLM_BASE_URL`, so `localhost` and `127.0.0.1` are different tables.
+- A complete table means no GPU load: to measure the tick under model load, pass `--tables-dir` with an empty directory.
 - `asyncio.sleep` on Windows overshoots by up to 13 ms. Don't put the tick back on asyncio.
 - `torch.cuda.mem_get_info` under WDDM doesn't show other processes' contexts (reads 0 MB).
 - No `torch` in WSL here; no Triton/TileLang on Windows, so Laya runs eager only.

@@ -1,6 +1,6 @@
 # Verification
 
-Use `PY=.venv/Scripts/python.exe` (the project env, CPU torch). For the CUDA checks, Laya and `synthetic`, use a CUDA torch such as `PY="C:/Users/kj638/Kevin codes/ComfyUI/.venv/Scripts/python.exe"`; with CPU torch, `fruit_fly_circuits.py` checks only the CPU path.
+Use `PY=.venv/Scripts/python.exe` (the project env, CPU torch). For the CUDA checks, Laya and `synthetic`, use a CUDA torch such as `CPY="C:/Users/kj638/Kevin codes/ComfyUI/.venv/Scripts/python.exe"` (sections below that need it say `$CPY`; older sections say `$PY`, so set `PY=$CPY` for those); with CPU torch, `fruit_fly_circuits.py` checks only the CPU path.
 
 ## Self-checks (must print OK)
 
@@ -23,11 +23,29 @@ Use `PY=.venv/Scripts/python.exe` (the project env, CPU torch). For the CUDA che
 Regression check: `"$PY" agent_loop.py --ticks 2000 --tick-cpus 2,3 --system1-cpus 4-7` must still print
 `{'FORAGE': 1847, 'FLEE': 25, 'ORIENT': 124, 'IDLE': 4}`, `jumps 22`, `rewards ['banana', 'geosmin']`.
 
+## Precompiled System 1 tables
+
+```bash
+"$PY" system1_engine.py             # states, table file + loader, goal precedence, filler, resume, stall
+"$PY" agent_loop.py --selfcheck     # also: complete table -> no worker; model unavailable -> status off, rules
+"$PY" agent_loop.py --backends laya --ticks 2000 --tick-cpus 2,3   # CPU-only, from the committed table
+"$PY" eval_system1.py laya --latency --skip-live                   # lookup p50 in microseconds; loom latch
+PYTHONPATH=.deps "$CPY" eval_system1.py laya --latency             # + live Laya, same answers (CUDA env)
+PYTHONPATH=.deps "$CPY" system1_engine.py --compile laya           # rebuild a table (fills only what's missing)
+```
+
+Expected: the CPU-only run prints `table laya 1938/1938 complete`, `by {'laya table': N}`, and doesn't
+import Laya. `--latency` prints a lookup p50 of a few µs, and the table's loom latch is 7 ticks, the same as
+rules. To check that tables don't change the default, re-run the regression oracle above.
+
 ## Closed loop under System-1 GPU load
 
 ```bash
-"$PY" agent_loop.py --backends synthetic,rules --ticks 2000 --tick-cpus 2,3 --system1-cpus 4-7
+"$CPY" agent_loop.py --backends synthetic,rules --tables-dir "$(mktemp -d)" --ticks 2000 --tick-cpus 2,3 --system1-cpus 4-7
 ```
+
+A model only loads the GPU while its table fills, so this uses an empty tables dir: the `synthetic` filler
+runs for most of the 2,000 ticks.
 
 Pass: `tick period ... p99` at or under ~15.7 ms, and overruns around 1% or less. Behaviour should show
 FORAGE dominating, FLEE for roughly 10–25 ticks around tick 1000, and jumps above 0. The `compass` line
@@ -37,11 +55,12 @@ should show a heading error max of about 0.025 rad; with `--landmark-gain 0` it 
 
 ```bash
 PYTHONPATH=.deps "$PY" eval_system1.py
-PYTHONPATH=.deps "$PY" agent_loop.py --device cpu --backends laya,rules --ticks 2000 --tick-cpus 2,3 --system1-cpus 4-7
+PYTHONPATH=.deps "$PY" agent_loop.py --device cpu --backends laya --ticks 2000 --tick-cpus 2,3 --system1-cpus 4-7
 ```
 
 Expected right now: rules at 100% on every check. Laya threat→FLEE at about 99%, rewarded→FORAGE at about 26%.
-Closed loop with Laya: ORIENT around 1980 ticks, tick period p99 about 15 ms.
+Closed loop from Laya's committed table: ORIENT 1678 / FORAGE 296 / FLEE 25 / IDLE 1 ticks, tick period p99
+about 15 ms (README 3f).
 
 ## Any LLM key (OpenAI-compatible)
 

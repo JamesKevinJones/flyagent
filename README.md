@@ -31,6 +31,11 @@ the live arena, compass and behaviour bars. Interpretation runs on a built-in pa
 model. Set `GEMINI_API_KEY`, or `LLM_BASE_URL` + `LLM_MODEL` (+ `LLM_API_KEY`), to add an LLM on top
 for phrasings the parser can't read. Measured results are in section 3e.
 
+`python serve.py --backends laya` swaps the rule table for Laya's precompiled answers. The table ships in
+`tables/`, so this works on the CPU build with no model installed (3f). The Qwen3-4B table ships too; it's
+found by `--backends llm` with `LLM_BASE_URL=http://127.0.0.1:11434/v1` and
+`LLM_MODEL=qwen3:4b-instruct-2507-q4_K_M` set, as when it was built.
+
 ## Self-checks
 
 ```bash
@@ -209,7 +214,7 @@ policy is unambiguous:
 (state → behaviour) pairs would mean distilling a 1,938-entry table into a 421M-parameter model. If
 Laya stays, (a) precompute its answers for every state at startup (60–85 s batched; save to disk),
 so runtime is a lookup with no GPU wake-ups, or (b) keep the GPU warm with a small kernel every
-~0.5 s. Option (a) only works while the state stays finite.
+~0.5 s. Option (a) only works while the state stays finite. **Option (a) is now built: see 3f.**
 
 ### 3c. Landmark correction of the compass
 
@@ -314,6 +319,57 @@ measurable cost.
 - **Map headings:** headings are map directions (landmark frame), not relative to the fly's body.
 - **Vocabulary:** anything outside the vocabulary is shown as ignored, never guessed.
 - **Rest vs threats:** a rest goal still flees threats, because no goal overrides the escape behaviour.
+
+### 3f. Precompiled System 1: a model's answers in microseconds
+
+`describe()` can only say 1,938 different things, and the models never read the goal fields. So a model's
+whole policy fits in a 1,938-line table, compiled once and then looked up. With `--backends laya` or `llm`, a
+filler process asks the model every state it hasn't answered yet: threat states first, 32 at a time,
+saving to `tables/<backend>-<model>-<hash>.jsonl` as it goes. The tick only does a dict lookup, and
+rules answer anything the table doesn't have yet. A complete table starts no worker and loads no model, so
+the committed Laya and Qwen3-4B tables give their policies to a CPU-only clone with nothing to download.
+
+**Compile cost** (`python system1_engine.py --compile <backend>`; RTX 4050; Qwen3-4B Q4_K_M in Ollama):
+
+| | Threat states (1,292) | All 1,938 | Failed |
+|---|---|---|---|
+| Laya | 90 s | 136 s | 0 |
+| Qwen3-4B | 39 min | 57 min | 0 |
+
+**Live model vs table** (`eval_system1.py <backend> --latency`, 100 sampled states):
+
+| | Live, warm, p50 / p99 | Table lookup, p50 / p99 | Same choice | Max \|ΔP\| |
+|---|---|---|---|---|
+| Laya | 44–159 / 79–483 ms (3 runs) | 1.2–3.2 / 1.9–4.8 µs | 100/100 | 0.0000 |
+| Qwen3-4B | 1,376 / 1,903 ms | 1.6 / 2.8 µs | 100/100 | 0.25 |
+| Rules | ~10 µs | n/a | n/a | n/a |
+
+Inside the running sim, a decision (lookup plus the goal check) costs 8.8 µs p50 on the CPU-only
+`.venv`, or about 24 µs while the filler is busy on the same machine.
+
+**Predator response** (ticks from loom onset until FLEE is latched; the loom lasts 30 ticks = 450 ms):
+
+| | Live model (3b, 3d) | Table | Rules |
+|---|---|---|---|
+| Laya | 20 ticks (300 ms, GPU waking from idle) | **7 ticks (105 ms)** | 7 ticks |
+| Qwen3-4B | never inside the loom | **13 ticks (195 ms)** | 7 ticks |
+
+Laya's table latches as fast as rules, because a lookup can't wait for a GPU. Qwen's table is 6 ticks later
+than rules for a policy reason, not a latency one. In 97 of the 646 "approaching" states Qwen picks FORAGE
+(Laya picks FLEE in all 646), including the ones the foraging fly is in when the predator appears, so it
+only flees once the threat reads "imminent".
+
+**The tick while a table fills** (Laya filler from an empty table, 4,000 ticks, 3 runs): period p99 15.02–15.16 ms,
+overruns 19–29 of 3,999 (0.5–0.7%), max 38–237 ms. The worst spike is the filler process loading Laya.
+The rules-only baseline is 4–5 overruns in 1,999.
+
+**What it doesn't change:**
+- **A table is the model's policy, warts included.** On the CPU from the Laya table, the closed loop is still
+  ORIENT 1,678 / FORAGE 296 / FLEE 25 / IDLE 1 ticks: the same ORIENT near-tie as 3b, now just fast.
+- **Goals:** the models were never asked about goals, so under any goal, non-threat states are decided by
+  rules; the table answers threats and the default goal.
+- **LLM randomness:** at temperature 0, Qwen's probabilities still moved by up to 0.25 between runs. A table
+  freezes one sample.
 
 ---
 

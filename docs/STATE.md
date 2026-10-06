@@ -14,7 +14,7 @@ goal page.
 **Free-text goals (sub-project 1 of 3)** are on `main`: `goals.py`, `Sim.set_goal`, `serve.py` +
 `web/index.html`, `eval_goals.py` (README 3e).
 
-**Precompiled System 1 (sub-project 2 of 3)** is built on branch `feat/precompiled-system1`, not merged yet:
+**Precompiled System 1 (sub-project 2 of 3)** is merged into `main` (2026-10-06):
 - A model backend's answers for all 1,938 states are compiled into `tables/<backend>-<slug>-<hash8>.jsonl`.
   It's filled in the background, threat states first; the tick only looks answers up, and rules cover misses.
 - Committed tables: Laya (136 s to compile) and Qwen3-4B (57 min).
@@ -26,12 +26,11 @@ goal page.
 
 ## In progress
 
-- Finishing the `feat/precompiled-system1` branch (merge or PR). Nothing half-done in the code.
+- Nothing half-done.
 
 ## The exact next step
 
-Merge `feat/precompiled-system1` into `main`. Before pushing, run `/security-review` on the pending diff.
-Then Kevin sets the `CLAUDE_API_KEY` CI secret (`gh secret set CLAUDE_API_KEY --repo JamesKevinJones/flyagent`).
+Sub-project 2 is merged and pushed. Next, Kevin sets the `CLAUDE_API_KEY` CI secret (`gh secret set CLAUDE_API_KEY --repo JamesKevinJones/flyagent`).
 Then brainstorm sub-project 3 (full connectome).
 
 Deferred minors from the sub-project 2 review:

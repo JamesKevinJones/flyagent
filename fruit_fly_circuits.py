@@ -11,6 +11,7 @@ including the host<->device copies, is captured as ONE CUDA graph: one launch + 
 The agent loop talks to it through two small pinned host vectors (`inp`, `out`), laid out below.
 """
 import math
+import sys
 import warnings
 
 import torch
@@ -35,10 +36,17 @@ N_OUT = 12
 
 class FlyBrain:
     def __init__(self, n_pn=50, n_kc=2000, kc_fan_in=6, kc_sparsity=0.05, n_wedges=16, n_odor_tags=32,
-                 device="cuda", seed=0):
+                 device="cuda", seed=0, wiring="synthetic"):
         self.device = torch.device(device)
         dev, f32 = self.device, torch.float32
         g = torch.Generator().manual_seed(seed)
+        self.wiring, self.mb = wiring, None
+        if wiring == "hemibrain":                # real MB from the connectome; n_pn and n_kc come from the data
+            from hemibrain_circuits import HemibrainMB, load_wiring
+            self.mb = HemibrainMB(load_wiring(), dev, kc_sparsity)
+            n_pn, n_kc = self.mb.n_pn, self.mb.n_kc
+        elif wiring != "synthetic":
+            raise ValueError(f"wiring must be 'synthetic' or 'hemibrain', not {wiring!r}")
         self.n_pn, self.n_kc, self.n_wedges = n_pn, n_kc, n_wedges
         self.k_active = max(1, int(n_kc * kc_sparsity))
 
@@ -52,13 +60,17 @@ class FlyBrain:
         self.dt = 0.015
 
         # ---- MB: PN->KC random fan-in, binary weights, stored as CSR (n_kc x n_pn) ----
-        rows = torch.arange(n_kc).repeat_interleave(kc_fan_in)
-        cols = torch.randint(0, n_pn, (n_kc * kc_fan_in,), generator=g)
-        self.w_pn_kc = torch.sparse_coo_tensor(torch.stack([rows, cols]), torch.ones(rows.numel()),
-                                               (n_kc, n_pn), check_invariants=False
-                                               ).coalesce().to_sparse_csr().to(dev)
-        self.kc = torch.zeros(n_kc, device=dev)
-        self.kc_familiarity = torch.zeros(n_kc, device=dev)
+        if self.mb is None:
+            rows = torch.arange(n_kc).repeat_interleave(kc_fan_in)
+            cols = torch.randint(0, n_pn, (n_kc * kc_fan_in,), generator=g)
+            self.w_pn_kc = torch.sparse_coo_tensor(torch.stack([rows, cols]), torch.ones(rows.numel()),
+                                                   (n_kc, n_pn), check_invariants=False
+                                                   ).coalesce().to_sparse_csr().to(dev)
+            self.kc = torch.zeros(n_kc, device=dev)
+            self.kc_familiarity = torch.zeros(n_kc, device=dev)
+        else:                                    # the same tensors, so odor tags and recall read the real KCs
+            self.w_pn_kc, self.kc, self.kc_familiarity = self.mb.w_pn_kc, self.mb.kc, self.mb.kc_familiarity
+            self.k_active = self.mb.k_active
         self.w_kc_mbon = torch.zeros(n_kc, device=dev)               # signed valence, learned by dopamine
         self.odor_tags = torch.zeros(n_odor_tags, n_kc, device=dev)  # remembered KC codes, row = odor id
         # goal buffers (set_goal): per-odor approach sign, and [goal heading, heading weight, home sign]
@@ -99,16 +111,20 @@ class FlyBrain:
         pn = odor / (odor.mean() + 1e-3)
 
         # MB: sparse expansion + APL k-WTA (only KCs with real drive may fire)
-        drive = (self.w_pn_kc @ pn[:, None]).squeeze(1)
-        thr = drive.topk(self.k_active).values[-1]
-        self.kc.copy_(((drive >= thr) & (drive > 0)).float())
-        n_active = self.kc.sum().clamp_min(1.0)
-        o[OUT_KC_ACTIVE] = n_active
-        o[OUT_NOVELTY] = 1.0 - (self.kc_familiarity * self.kc).sum() / n_active
-        self.kc_familiarity.copy_(torch.maximum(self.kc_familiarity * self.kc_novelty_decay, self.kc))
-        # dopamine (DAN) gates plasticity at the KC->MBON synapse; zero on most ticks
-        self.w_kc_mbon.add_(self.kc * x[IN_DOPAMINE] * self.dopamine_lr).clamp_(-1.0, 1.0)
-        o[OUT_VALENCE] = (self.w_kc_mbon * self.kc).sum() / n_active
+        if self.mb is not None:                  # fixed at construction, so still one graph
+            self.mb.step(pn, x[IN_DOPAMINE], o)
+            n_active = self.kc.sum().clamp_min(1.0)
+        else:
+            drive = (self.w_pn_kc @ pn[:, None]).squeeze(1)
+            thr = drive.topk(self.k_active).values[-1]
+            self.kc.copy_(((drive >= thr) & (drive > 0)).float())
+            n_active = self.kc.sum().clamp_min(1.0)
+            o[OUT_KC_ACTIVE] = n_active
+            o[OUT_NOVELTY] = 1.0 - (self.kc_familiarity * self.kc).sum() / n_active
+            self.kc_familiarity.copy_(torch.maximum(self.kc_familiarity * self.kc_novelty_decay, self.kc))
+            # dopamine (DAN) gates plasticity at the KC->MBON synapse; zero on most ticks
+            self.w_kc_mbon.add_(self.kc * x[IN_DOPAMINE] * self.dopamine_lr).clamp_(-1.0, 1.0)
+            o[OUT_VALENCE] = (self.w_kc_mbon * self.kc).sum() / n_active
         match = (self.odor_tags @ self.kc) / n_active             # overlap with each remembered odor
         best = match.max(0)
         o[OUT_ODOR_ID] = best.indices.float()
@@ -209,7 +225,8 @@ class FlyBrain:
         self.odor_tags[odor_id].copy_(self.kc)
 
     def _state(self):
-        return [self.kc, self.kc_familiarity, self.w_kc_mbon, self.bump, self.fb_mem, self.cpg_phase]
+        mb = self.mb.state() if self.mb is not None else [self.kc, self.kc_familiarity, self.w_kc_mbon]
+        return mb + [self.bump, self.fb_mem, self.cpg_phase]
 
     def vram_mb(self):
         tensors = self._state() + [self.odor_tags, self.w_ring, self._inp_dev, self._out_dev,
@@ -350,7 +367,45 @@ def demo(device):
           f"  circuit VRAM={b.vram_mb():.2f} MB")
 
 
+def demo_hemibrain(device):
+    b = FlyBrain(device=device, wiring="hemibrain")
+    graph = b.capture()
+    assert b.n_kc == 1927 and "hemibrain" not in sys.modules            # offline_load: never the downloader
+    odor_a = torch.rand(b.n_pn, generator=torch.Generator().manual_seed(1))
+    b.inp.zero_()
+    b.inp[IN_ODOR:] = odor_a
+    b.tick()
+    assert abs(float(b.out[OUT_KC_ACTIVE]) - b.mb.k_active) <= 2 and float(b.out[OUT_NOVELTY]) > 0.9
+    assert abs(float(b.out[OUT_VALENCE])) < 1e-6                           # an untrained odor reads 0
+    b.remember_odor(3)
+    b.inp[IN_DOPAMINE] = 1.0                                               # one reward
+    b.tick()
+    b.inp[IN_DOPAMINE] = 0.0
+    b.tick()
+    assert float(b.out[OUT_NOVELTY]) < 0.05 and int(b.out[OUT_ODOR_ID]) == 3
+    reward = float(b.out[OUT_VALENCE])
+    assert reward >= 0.1, reward
+    p = FlyBrain(device=device, wiring="hemibrain")                        # one punishment
+    p.inp[IN_ODOR:] = odor_a
+    p.tick()
+    p.inp[IN_DOPAMINE] = -1.0
+    p.tick()
+    p.inp[IN_DOPAMINE] = 0.0
+    p.tick()
+    punish = float(p.out[OUT_VALENCE])
+    assert punish <= -0.1, punish
+    for _ in range(100):                                                   # valence_saturates
+        b.inp[IN_DOPAMINE] = 1.0
+        b.tick()
+    v = float(b.out[OUT_VALENCE])
+    assert math.isfinite(v) and -1.0 <= v <= 1.0, v
+    print(f"[{device}] hemibrain self-check OK  graph={graph}  n_pn={b.n_pn} n_kc={b.n_kc}  "
+          f"valence reward {reward:.3f} punish {punish:.3f} saturated {v:.3f}")
+
+
 if __name__ == "__main__":
     demo("cpu")
+    demo_hemibrain("cpu")
     if torch.cuda.is_available():
         demo("cuda")
+        demo_hemibrain("cuda")

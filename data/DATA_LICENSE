@@ -1,0 +1,17 @@
+data/hemibrain_mb_cx.npz is derived from:
+
+  Janelia FlyEM hemibrain v1.2 (Scheffer et al. 2020, eLife), CC BY 4.0
+
+  Scheffer, L. K. et al. (2020). A connectome and analysis of the adult Drosophila central brain.
+  eLife 9:e57443. https://doi.org/10.7554/eLife.57443
+
+  Source: https://storage.googleapis.com/hemibrain/v1.2/exported-traced-adjacencies-v1.2.tar.gz
+  (the "compact connection matrix summary", 45,872,577 bytes)
+
+Licence: Creative Commons Attribution 4.0 International (CC BY 4.0),
+https://creativecommons.org/licenses/by/4.0/
+
+Changes made: the mushroom-body (projection neurons, Kenyon cells, MBONs, PAM/PPL1 input) and
+central-complex (EPG, EPGt, PEN1, PEN2, Delta7, PEG) neurons were selected; their synapse counts were
+aggregated and normalised as described in hemibrain.py, which regenerates the file from the source.
+The compass angles assigned to central-complex neurons are not part of the dataset (see hemibrain.py).

@@ -100,6 +100,7 @@
           <div class="bars" id="bars"></div>
           <p class="jump" id="jump">escape reflex: ready</p>
           <p class="jump" id="s1">System 1: rules</p>
+          <p class="jump" id="wiring" hidden>Wiring: Janelia hemibrain v1.2 (CC BY)</p>
         </div>
       </div>
     </section>
@@ -161,6 +162,7 @@ function updatePanels(s) {
     : t.status === "stalled" ? `System 1: ${t.backend} table stalled at ${n(t.filled)} / ${n(t.total)}, rules cover the rest`
     : `System 1: ${t.backend} unavailable, rules`;
   if ($("s1").textContent !== s1) $("s1").textContent = s1;
+  if ($("wiring").hidden !== (s.wiring !== "hemibrain")) $("wiring").hidden = s.wiring !== "hemibrain";
   $("ticks").textContent = `tick period p50 ${s.tick_p50.toFixed(2)} · p99 ${s.tick_p99.toFixed(2)} ms`;
 }
 

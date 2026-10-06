@@ -159,8 +159,8 @@ class Sim:
     pacing, CPU pinning and stats belong to the caller (the CLI below, or serve.py)."""
 
     def __init__(self, device="cpu", n_kc=2000, backends=("rules",), system1_cpus=(), gyro_bias=0.0005,
-                 landmark_gain=0.02, wall=False, tables_dir="tables"):
-        self.device, self.n_kc = device, n_kc
+                 landmark_gain=0.02, wall=False, tables_dir="tables", wiring="synthetic"):
+        self.device, self.n_kc, self.wiring = device, n_kc, wiring
         self.gyro_bias, self.landmark_gain, self.wall = gyro_bias, landmark_gain, wall
         self.backends = tuple(backends)
         # System 1 decides by lookup: the first model backend's precompiled table, rules on a miss.
@@ -183,7 +183,7 @@ class Sim:
         self.reset()
 
     def reset(self):
-        self.brain = fc.FlyBrain(n_kc=self.n_kc, device=self.device)
+        self.brain = fc.FlyBrain(n_kc=self.n_kc, device=self.device, wiring=self.wiring)
         self.world = World(self.brain.n_pn, self.gyro_bias, self.landmark_gain)
         self.world.wall, self.world.loom_start = self.wall, -10**9
         self.names = {}
@@ -293,7 +293,7 @@ class Sim:
             "jump": bool(out[fc.OUT_JUMP]), "odor": state["odor"], "home": {"x": 0.0, "y": 0.0},
             "loom": world.loom, "sources": {n: src.tolist() for n, (src, _, _) in world.sources.items()},
             "table": {"backend": self.model or "rules", "filled": len(self.table), "total": N_STATES,
-                      "status": self.table_status}, "decided_by": self.decided_by,
+                      "status": self.table_status}, "decided_by": self.decided_by, "wiring": self.wiring,
             "wall": WALL if world.wall else None, "tick_p50": self.tick_stats[0], "tick_p99": self.tick_stats[1],
         }
 
@@ -317,7 +317,7 @@ def run(args):
     torch.set_num_threads(1)                          # tiny ops; thread pools only add wake-up jitter
 
     sim = Sim(args.device, args.n_kc, tuple(args.backends.split(",")), parse_cpus(args.system1_cpus),
-              args.gyro_bias, args.landmark_gain, tables_dir=args.tables_dir)
+              args.gyro_bias, args.landmark_gain, tables_dir=args.tables_dir, wiring=args.wiring)
     gc.collect()
     gc.freeze()                                       # long-lived objects out of the collector's way
     period = args.tick_ms / 1000
@@ -353,7 +353,8 @@ def run(args):
     sim.close()
     vram = torch.cuda.max_memory_allocated() / 2**20 if args.device == "cuda" else 0.0
     lookup_us, s1_age = sim.lookup_us, sim.s1_age
-    print(f"device={args.device} graph={sim.graph} n_kc={args.n_kc} tick_cpus={tick_cpus or 'unpinned'} "
+    print(f"device={args.device} wiring={args.wiring} graph={sim.graph} n_kc={sim.brain.n_kc} "
+          f"tick_cpus={tick_cpus or 'unpinned'} "
           f"high_priority={realtime} "
           f"backends={args.backends}")
     print(f"tick compute   p50 {pct(compute_ms, 50):.3f}  p99 {pct(compute_ms, 99):.3f}  max {max(compute_ms):.3f} ms")
@@ -381,6 +382,8 @@ def main():
     ap.add_argument("--backends", default="rules",
                     help="fallback chain, e.g. laya,http,rules; see system1_engine.py and README 3b for why rules is default")
     ap.add_argument("--tables-dir", default="tables", help="precompiled System 1 tables (see system1_engine.py)")
+    ap.add_argument("--wiring", default="synthetic", choices=("synthetic", "hemibrain"),
+                    help="hemibrain: mushroom body and compass from the Janelia connectome (README 3g)")
     ap.add_argument("--tick-cpus", default="", help="e.g. 2,3 (one P-core, both hyperthreads)")
     ap.add_argument("--system1-cpus", default="", help="e.g. 4-7 (other P-cores)")
     run(ap.parse_args())
@@ -491,6 +494,23 @@ def selfcheck():
         assert len(sim.table) == N_STATES - len(bad) and sim.table_status == "stalled", (len(sim.table), sim.table_status)
         s1._filler = None
         sim.close()
+
+    from system1_engine import BASE_KEYS, VOCAB
+    sim = Sim(wiring="hemibrain")                                       # hemibrain_reaches_and_flees
+    assert sim.brain.n_kc == 1927
+    fled, seen = False, set()
+    for t in range(2000):
+        if t == 1000:
+            sim.launch_predator()
+        snap = sim.step()
+        fled |= 1000 <= t < 1030 and snap["behaviour"] == "FLEE"
+        st = describe(sim.brain.out, sim.world.loom, sim.names, sim.goal)
+        seen.add(tuple(st[k] for k in BASE_KEYS))
+    assert "banana" in sim.world.rewarded and fled, (sim.world.rewarded, fled)
+    assert all(v in VOCAB[k] for st in seen for k, v in zip(BASE_KEYS, st)), seen   # describe_vocab_holds
+    sim.reset()                                                          # reset_keeps_wiring
+    assert sim.brain.n_kc == 1927 and sim.step()["wiring"] == "hemibrain"
+    sim.close()
     print("agent_loop self-check OK")
 
 

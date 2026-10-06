@@ -190,8 +190,10 @@ def main():
     ap.add_argument("--device", default="cpu")
     ap.add_argument("--backends", default="rules", help="System 1 chain, e.g. laya,rules (README 3f)")
     ap.add_argument("--tables-dir", default="tables")
+    ap.add_argument("--wiring", default="synthetic", choices=("synthetic", "hemibrain"))
     args = ap.parse_args()
-    sim = Sim(device=args.device, backends=tuple(args.backends.split(",")), wall=True, tables_dir=args.tables_dir)
+    sim = Sim(device=args.device, backends=tuple(args.backends.split(",")), wall=True, tables_dir=args.tables_dir,
+              wiring=args.wiring)
     runner = SimRunner(sim)
     llm = make_llm()
     server = make_server(sim, args.port, llm, runner)

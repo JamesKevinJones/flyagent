@@ -82,10 +82,13 @@ def interpretation_accuracy(llm):
     return out
 
 
+WIRING = "synthetic"                             # --wiring
+
+
 def follow(goal_text, ticks=2000, warmup=0):
     """Run a goal headless from the start position (after `warmup` ticks of default foraging) and measure it."""
     from agent_loop import Sim
-    sim = Sim(wall=True)
+    sim = Sim(wall=True, wiring=WIRING)
     for _ in range(warmup):
         sim.step()
     goal = interpret(goal_text).goal if goal_text else sim.goal
@@ -116,7 +119,7 @@ def serving_cost(ticks=2000):
     from serve import SimRunner, make_server
     result = {}
     for label in ("headless", "server + 1 SSE client"):
-        sim = Sim(wall=True)
+        sim = Sim(wall=True, wiring=WIRING)
         runner = SimRunner(sim)
         runner.periods = __import__("collections").deque(maxlen=ticks)
         server = None
@@ -148,7 +151,10 @@ FOLLOW = [("(no goal: default foraging)", "", 0), ("find the banana", "find the 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--no-llm", action="store_true")
+    ap.add_argument("--wiring", default="synthetic", choices=("synthetic", "hemibrain"))
     args = ap.parse_args()
+    global WIRING
+    WIRING = args.wiring
     llm = None if args.no_llm else make_llm()
 
     acc = interpretation_accuracy(llm)

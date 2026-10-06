@@ -10,12 +10,16 @@ Backends, tried in order until one answers:
 Runs in its own process (see agent_loop.py), so Laya's Python-heavy tokenisation never takes the
 GIL from the 15 ms tick.
 """
+import hashlib
 import http.client
+import itertools
 import json
 import math
 import os
+import re
 import time
 import urllib.parse
+from pathlib import Path
 from typing import NamedTuple
 
 from goals import AVOIDABLE, DEFAULT_GOAL, SEEKABLE
@@ -292,6 +296,111 @@ BACKENDS = {"laya": laya_backend, "http": http_backend, "llm": llm_backend, "syn
             "rules": rules_backend}
 
 
+# ------------------------------------------------------------------ precompiled tables
+# describe() can only emit these words, so a model's whole policy is 1,938 answers: compile them once,
+# then a live decision is a dict lookup. Models never read the goal fields, so one table serves every goal.
+BASE_KEYS = ("threat", "odor", "odor_familiarity", "odor_memory", "home", "moving")
+THREATS = ("none", "approaching", "imminent")
+ODORS = [("none", "n/a", "neutral")] + list(itertools.product(("banana", "geosmin", "unknown"), ("new", "familiar"),
+                                                              ("rewarded", "punished", "neutral")))
+HOMES = ["here"] + [f"{d}, {r}" for d in _DIRS for r in ("near", "far")]
+
+
+def all_states():
+    for threat, (odor, fam, mem), home, moving in itertools.product(THREATS, ODORS, HOMES, ("yes", "no")):
+        yield {"threat": threat, "odor": odor, "odor_familiarity": fam, "odor_memory": mem, "home": home,
+               "moving": moving}
+
+
+VOCAB = {k: {s[k] for s in all_states()} for k in BASE_KEYS}
+N_STATES = len(ODORS) * len(THREATS) * len(HOMES) * 2
+
+
+def fill_order():
+    """Threat states first: they're the ones where a late answer costs the fly."""
+    states = list(all_states())
+    return [s for s in states if s["threat"] != "none"] + [s for s in states if s["threat"] == "none"]
+
+
+def base_key(state):
+    return tuple(state[k] for k in BASE_KEYS)
+
+
+def table_path(name, tables_dir="tables"):
+    """tables/<backend>-<slug>-<hash8>.jsonl. The hash covers the model id and the prompt the backend sends, so
+    a changed question or model starts a fresh table. Read from env now, without loading the model."""
+    env = os.environ
+    if name == "laya":
+        model_id = slug = env.get("LAYA_MODEL", "convaiinnovations/laya-typed-decisions")
+    elif name == "llm":
+        config = llm_config()
+        if config is None:
+            return None
+        model_id, slug = config[0] + " " + config[2], config[2]
+    elif name == "http":
+        model_id, slug = env.get("JEV_URL", ""), "jev"      # never the URL in a filename: it can carry an account id
+    elif name == "synthetic":
+        model_id = slug = "synthetic"
+    else:
+        return None
+    prompt = LLM_PROMPT if name == "llm" else QUESTIONS
+    digest = hashlib.sha256("\n".join([name, model_id, json.dumps(prompt, sort_keys=True)]).encode()).hexdigest()
+    return Path(tables_dir) / f"{name}-{re.sub(r'[^A-Za-z0-9._-]+', '-', slug)}-{digest[:8]}.jsonl"
+
+
+def valid_answer(state, probs, urgency, p_jump):
+    try:
+        if tuple(state) != BASE_KEYS or any(state[k] not in VOCAB[k] for k in BASE_KEYS):
+            return False
+        nums = [float(x) for x in probs] + [float(urgency), float(p_jump)]
+    except (TypeError, ValueError, KeyError):
+        return False
+    return (len(nums) == 6 and all(math.isfinite(x) and 0 <= x <= 1 for x in nums)
+            and abs(sum(nums[:4]) - 1) <= 1e-3)
+
+
+def load_table(path, name):
+    """The file is editable, so it is input: invalid lines are skipped and counted; the last duplicate wins."""
+    table, skipped = {}, 0
+    try:
+        f = open(path, encoding="utf-8")
+    except FileNotFoundError:
+        return table
+    with f:
+        for line in f:
+            try:
+                row = json.loads(line)
+                state = row["state"]
+                if not valid_answer(state, row["probs"], row["urgency"], row["p_jump"]):
+                    raise ValueError
+                table[base_key(state)] = Decision(tuple(float(p) for p in row["probs"]), float(row["urgency"]),
+                                                  float(row["p_jump"]), f"{name} table", float(row["ms"]))
+            except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+                skipped += 1
+    if skipped:
+        print(f"[system1] {path}: skipped {skipped} invalid lines", flush=True)
+    return table
+
+
+def append_table(path, answers):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a", encoding="utf-8") as f:
+        f.write("".join(json.dumps({"state": {k: s[k] for k in BASE_KEYS}, "probs": list(d.probs),
+                                    "urgency": d.urgency, "p_jump": d.p_jump, "ms": round(d.ms, 3)}) + "\n"
+                        for s, d in answers))
+
+
+def lookup(state, table, rules):
+    """Threat: the table (the model's own FLEE). Any goal set: rules, the only policy that knows goals.
+    Otherwise the table. A miss is always rules."""
+    goal_set = any(state.get(k, "none") != "none" for k in ("goal_seek", "goal_avoid", "goal_heading")) \
+        or state.get("goal_rest", "no") == "yes"
+    if state["threat"] == "none" and goal_set:
+        return rules(state)
+    return table.get(base_key(state)) or rules(state)
+
+
 # ------------------------------------------------------------------ worker-process entry points
 _chain = []
 
@@ -414,4 +523,43 @@ if __name__ == "__main__":
     finally:
         del os.environ["GEMINI_API_KEY"]
     srv.shutdown()
+    # precompiled tables: the state space, the file, goal precedence, identity
+    import tempfile
+    from pathlib import Path
+    states = list(all_states())
+    assert len(states) == N_STATES == 1938 and all(tuple(st) == BASE_KEYS for st in states)
+    assert tuple(k for k in describe(out, 0.0, {0: "banana"}) if not k.startswith("goal_")) == BASE_KEYS
+    order = fill_order()
+    assert len(order) == 1938 and all(st["threat"] != "none" for st in order[:1292]) \
+        and all(st["threat"] == "none" for st in order[1292:])
+    with tempfile.TemporaryDirectory() as tmp:            # load_table skips bad lines, last duplicate wins
+        good = states[0]
+        p = Path(tmp) / "t.jsonl"
+        append_table(p, [(good, Decision((0.7, 0.1, 0.1, 0.1), 0.3, 0.1, "laya", 40.0))])
+        with open(p, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"state": states[1], "probs": [0.9, 0.9, 0, 0], "urgency": 0, "p_jump": 0, "ms": 1}) + "\n")
+            f.write(json.dumps({"state": {**states[2], "odor": "durian"}, "probs": [1, 0, 0, 0], "urgency": 0,
+                                "p_jump": 0, "ms": 1}) + "\n")
+            f.write(json.dumps({"state": good, "probs": [0.1, 0.1, 0.1, 0.7], "urgency": 0, "p_jump": 0, "ms": 2}) + "\n")
+            f.write('{"state": {"threat": "no')
+        t = load_table(p, "laya")
+        assert list(t) == [base_key(good)] and t[base_key(good)].probs == (0.1, 0.1, 0.1, 0.7), t
+        assert t[base_key(good)].backend == "laya table" and t[base_key(good)].ms == 2
+        assert load_table(Path(tmp) / "missing.jsonl", "laya") == {}
+    calm = {**s, "goal_rest": "yes"}                       # goal precedence
+    t2 = {base_key(s): Decision((0.25,) * 4, 0.5, 0.5, "laya table", 9.0)}
+    assert lookup(calm, t2, rules).backend == "rules" and lookup(calm, t2, rules).probs == (0, 0, 0, 1)
+    assert lookup(s, t2, rules).backend == "laya table"
+    threat = {**s, "threat": "imminent", "goal_rest": "yes"}
+    t2[base_key(threat)] = Decision((0.1, 0.7, 0.1, 0.1), 1.0, 0.9, "laya table", 9.0)
+    assert lookup(threat, t2, rules).backend == "laya table"
+    assert lookup({**s, "threat": "approaching"}, t2, rules).backend == "rules"     # threat miss -> rules
+    assert lookup({**s, "odor": "durian"}, t2, rules).backend == "rules"            # unknown_state_uses_rules
+    assert table_path("rules") is None and table_path("laya").name.startswith("laya-convaiinnovations-laya-typed-decisions-")
+    assert table_path("http").name.startswith("http-jev-") and table_path("llm") is None
+    before = table_path("laya")
+    QUESTIONS["jump"]["instructions"] += " "
+    assert table_path("laya") != before
+    QUESTIONS["jump"]["instructions"] = QUESTIONS["jump"]["instructions"][:-1]
+    assert table_path("laya") == before
     print("self-check OK", s)

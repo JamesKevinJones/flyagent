@@ -7,26 +7,12 @@ Ground truth exists only where the intended policy is unambiguous (the `EXPECT` 
 everywhere else the report is plain agreement with the rule table, which is a baseline, not truth.
 """
 import argparse
-import itertools
 import random
 import time
 from collections import Counter
 
 from fruit_fly_circuits import BEHAVIOURS
-from system1_engine import BACKENDS, QUESTIONS, rules_backend
-
-THREATS = ("none", "approaching", "imminent")
-ODORS = [("none", "n/a", "neutral")] + list(itertools.product(("banana", "geosmin", "unknown"), ("new", "familiar"),
-                                                              ("rewarded", "punished", "neutral")))
-HOMES = ["here"] + [f"{d}, {r}" for d in ("ahead", "ahead-left", "left", "behind-left", "behind", "behind-right",
-                                         "right", "ahead-right") for r in ("near", "far")]
-
-
-def all_states():
-    for threat, (odor, fam, mem), home, moving in itertools.product(THREATS, ODORS, HOMES, ("yes", "no")):
-        yield {"threat": threat, "odor": odor, "odor_familiarity": fam, "odor_memory": mem, "home": home,
-               "moving": moving}
-
+from system1_engine import BACKENDS, QUESTIONS, THREATS, all_states, rules_backend
 
 # (name, which states, what is acceptable)
 EXPECT = [

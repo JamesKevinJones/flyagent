@@ -36,6 +36,8 @@ security review of the pushed diff found nothing:
   2026-10-07). The default wiring stays synthetic.
 - Spec (with its 2026-10-07 amendments) and plan: `docs/superpowers/specs/2026-10-06-hemibrain-wiring-design.md`,
   `docs/superpowers/plans/2026-10-06-hemibrain-wiring.md`.
+- README 3g opens with a 24 s inline clip of the hemibrain page (user-attachments URL; source
+  `docs/media/hemibrain.mp4`).
 
 ## In progress
 
@@ -51,7 +53,6 @@ All three sub-projects are done and pushed. Two steps remain:
      model maxes out at about 0.016 rad/tick.
    - **The other hemisphere.**
    - **FlyWire,** if its CC BY-NC licence suits.
-   - **README 3g clip:** a recording of `serve.py --wiring hemibrain`.
    - **The deferred minors below.**
 
 Deferred minors from the sub-project 3 review:

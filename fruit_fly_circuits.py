@@ -42,9 +42,8 @@ class FlyBrain:
         g = torch.Generator().manual_seed(seed)
         self.wiring, self.mb = wiring, None
         if wiring == "hemibrain":                # real MB from the connectome; n_pn and n_kc come from the data
-            from hemibrain_circuits import HemibrainMB, derived_ring_kernel, load_wiring
-            data = load_wiring()
-            self.mb = HemibrainMB(data, dev, kc_sparsity)
+            from hemibrain_circuits import HemibrainMB, load_wiring
+            self.mb = HemibrainMB(load_wiring(), dev, kc_sparsity)
             n_pn, n_kc = self.mb.n_pn, self.mb.n_kc
         elif wiring != "synthetic":
             raise ValueError(f"wiring must be 'synthetic' or 'hemibrain', not {wiring!r}")
@@ -85,13 +84,7 @@ class FlyBrain:
         self.e_cos, self.e_sin = torch.cos(self.theta), torch.sin(self.theta)
         self.bump = torch.relu(torch.cos(self.theta))
         self.bump /= self.bump.sum()
-        if self.mb is not None:
-            # The per-neuron compass failed its rotation-gain test (README 3g); the spec's fallback keeps this ring
-            # with the kernel derived from the real wiring, and lets the bump settle to that kernel's shape first
-            self.w_ring = derived_ring_kernel(data, n_wedges).to(dev)
-            for _ in range(50):
-                r = torch.relu(self.w_ring @ self.bump)
-                self.bump = r / r.sum()
+        # On hemibrain wiring the compass stays this exact ring: both connectome compasses failed (README 3g)
         self.fb_mem = torch.zeros(n_wedges, device=dev)
         # population-vector gain of a normalised bump, so FB memory decodes to body lengths
         self.pv_gain = float(torch.hypot((self.bump * self.e_cos).sum(), (self.bump * self.e_sin).sum()))
@@ -398,7 +391,7 @@ def demo_hemibrain(device):
     b.tick()
     assert float(b.out[OUT_NOVELTY]) < 0.05 and int(b.out[OUT_ODOR_ID]) == 3
     reward = float(b.out[OUT_VALENCE])
-    assert reward >= 0.1, reward
+    assert reward >= 0.04, reward                                          # 2x describe()'s 0.02
     p = FlyBrain(device=device, wiring="hemibrain")                        # one punishment
     p.inp[IN_ODOR:] = odor_a
     p.tick()
@@ -407,24 +400,50 @@ def demo_hemibrain(device):
     p.inp[IN_DOPAMINE] = 0.0
     p.tick()
     punish = float(p.out[OUT_VALENCE])
-    assert punish <= -0.1, punish
+    assert punish <= -0.04, punish
     for _ in range(100):                                                   # valence_saturates
         b.inp[IN_DOPAMINE] = 1.0
         b.tick()
     v = float(b.out[OUT_VALENCE])
     assert math.isfinite(v) and -1.0 <= v <= 1.0, v
-    # compass: the per-neuron CX failed the rotation-gain test (README 3g), so the spec's fallback runs: the ring
-    # with its kernel derived from the real wiring. It must pass the synthetic compass checks, including test 4.
-    from hemibrain_circuits import derived_ring_kernel, load_wiring
+    # Odor specificity and the MBONs used (final review, Kevin's calls 2026-10-07): each KC's input is normalised by
+    # its total, so unrelated odors get distinct codes and one reward doesn't make every odor read "rewarded"; valence
+    # comes from the fully traced right-side MBONs, each weighted by its real synapse count.
+    from hemibrain_circuits import load_wiring
+    data = load_wiring()
+    assert bool(torch.from_numpy(data["mbon_side"] == "R")[b.mb.mbon.cpu()].all())
+    assert torch.equal(b.mb.w0, b.mb.w0.round()) and float(b.mb.w0.min()) >= 1        # raw synapse counts
+    g = torch.Generator().manual_seed(7)
+    q = FlyBrain(device=device, wiring="hemibrain")
+    overlap = []
+    for _ in range(20):
+        codes = []
+        for _ in range(2):
+            q.inp[IN_ODOR:] = torch.rand(q.n_pn, generator=g)
+            q.tick()
+            codes.append(q.kc.cpu().bool().clone())
+        overlap.append(float((codes[0] & codes[1]).sum()) / float((codes[0] | codes[1]).sum()))
+    overlap = sum(overlap) / len(overlap)
+    assert overlap < 0.1, overlap
+    r = FlyBrain(device=device, wiring="hemibrain")
+    r.inp[IN_ODOR:] = odor_a
+    r.tick()
+    r.inp[IN_DOPAMINE] = 1.0
+    r.tick()
+    r.inp[IN_DOPAMINE] = 0.0
+    spill = []
+    for _ in range(20):
+        r.inp[IN_ODOR:] = torch.rand(r.n_pn, generator=g)
+        r.tick()
+        spill.append(float(r.out[OUT_VALENCE]))
+    assert max(spill) < 0.02, spill                                        # unrelated odors stay "neutral"
+    # Compass: both connectome compasses failed (README 3g): the per-neuron model turns too slowly, the derived kernel
+    # drops every turn under ~0.012 rad/tick. Kevin's call (2026-10-07): hemibrain wiring keeps the exact synthetic ring.
     c = FlyBrain(device=device, wiring="hemibrain")
-    assert torch.allclose(c.w_ring.cpu(), derived_ring_kernel(load_wiring())), "hemibrain must use the derived kernel"
     c.capture()
-    # The P-EN interpolation is exact only for a cosine bump, and this narrower bump pins to wedges: the 0.0005
-    # rad/tick gyro bias never accumulates, so that check becomes a reported number (README 3g)
-    err, drift = _compass_checks(c, heading_tol=0.05, bias_integrates=False, settle_tol=0.05)
-    assert drift[0.02] <= 0.05, drift                                      # test 4: landmark + biased gyro
+    err, drift = _compass_checks(c)
     rot = {}
-    for w in (0.02, 0.1, 0.35):                                            # test 3: rotation gain 0.9-1.1
+    for w in (0.005, 0.01, 0.02, 0.1, 0.35):                               # test 3, down to slow turns
         c.inp.zero_()
         prev, total = float(c.out[OUT_HEADING]), 0.0
         for _ in range(200):
@@ -433,9 +452,7 @@ def demo_hemibrain(device):
             total += _wrap(float(c.out[OUT_HEADING]) - prev)
             prev = float(c.out[OUT_HEADING])
         rot[w] = total / (200 * w)
-    # Measured 0.879 / 0.987 / 1.004: wedge pinning makes the slowest turns under-rotate ~12%, just outside the
-    # spec's 0.9 (README 3g); the landmark corrects it (test 4 above). Pinned here so it can't silently get worse.
-    assert 0.85 <= rot[0.02] <= 1.1 and all(0.9 <= rot[w] <= 1.1 for w in (0.1, 0.35)), rot
+    assert all(0.9 <= gain <= 1.1 for gain in rot.values()), rot
     c.inp.zero_()                                                          # path integration on this bump shape
     for leg in range(4):
         for _ in range(25):
@@ -457,8 +474,8 @@ def demo_hemibrain(device):
     dist = math.hypot(float(c.out[OUT_HOME_X]) - x0, float(c.out[OUT_HOME_Y]) - y0)
     assert abs(dist - 25) < 1.0, f"home vector scale: walked 25, home moved {dist:.2f}"
     print(f"[{device}] hemibrain self-check OK  graph={graph}  n_pn={b.n_pn} n_kc={b.n_kc}  "
-          f"valence reward {reward:.3f} punish {punish:.3f} saturated {v:.3f}  "
-          f"compass err {err:.4f} drift {drift[0.0]:.2f} -> {drift[0.02]:.3f} rad with landmark  "
+          f"valence reward {reward:.3f} punish {punish:.3f} saturated {v:.3f}  odor overlap {overlap:.3f}  "
+          f"spill {max(spill):.3f}  compass err {err:.4f} drift {drift[0.0]:.2f} -> {drift[0.02]:.3f} rad with landmark  "
           f"rotation gain {', '.join(f'{g:.3f}' for g in rot.values())}  home {home:.3f}")
 
 

@@ -12,8 +12,10 @@ import torch
 from fruit_fly_circuits import OUT_KC_ACTIVE, OUT_NOVELTY, OUT_VALENCE
 
 DATA_PATH = Path(__file__).with_name("data") / "hemibrain_mb_cx.npz"
-# Smallest of {0.05, 0.1, 0.2, 0.5, 1.0} for which one reward gives valence >= 0.1 and one punishment <= -0.1
-MB_LR = 0.5
+# One pairing must read "rewarded"/"punished" to describe() (|valence| > 0.02) with a 2x margin, while unrelated odors
+# stay "neutral" (< 0.02). Of {0.05, 0.1, 0.2, 0.5, 1.0}, 0.1 is the one that meets both: reward 0.043, punish -0.048,
+# unrelated odors at most 0.011 (spill runs at ~24% of the rewarded value, so +-0.1 and < 0.02 can't both hold).
+MB_LR = 0.1
 
 
 def load_wiring(path=DATA_PATH):
@@ -23,6 +25,9 @@ def load_wiring(path=DATA_PATH):
 
 class HemibrainMB:
     """Real PN->KC expansion, APL as 5% k-winners-take-all, and learning at the real KC->MBON synapses.
+    Each KC's input is normalised by its total synapse count: KCs differ ~4x in total input, and raw counts let the
+    same high-input KCs win for every odor (unrelated odors overlapped 0.23). Valence uses the right-side MBONs (the
+    fully traced mushroom body; left-side copies are cut at the volume's edge), each weighted by its synapse count.
     Dopamine depresses the active KCs' synapses onto the MBONs it innervates (Aso et al. 2014): reward through PAM,
     punishment through PPL1, split per MBON by its measured PAM/PPL1 input. Valence is read against the naive
     network: reward depresses avoidance MBONs (sign < 0) -> positive; punishment depresses approach MBONs -> negative."""
@@ -32,12 +37,16 @@ class HemibrainMB:
         self.n_pn, self.n_kc = len(data["pn_types"]), int(data["n_kc"])
         self.k_active = max(1, int(self.n_kc * kc_sparsity))
         self.novelty_decay, self.lr = novelty_decay, lr
-        idx = torch.stack([torch.from_numpy(data["pn_kc_row"]).long(), torch.from_numpy(data["pn_kc_col"]).long()])
-        self.w_pn_kc = torch.sparse_coo_tensor(idx, torch.from_numpy(data["pn_kc_w"]), (self.n_kc, self.n_pn),
+        kc_row = data["pn_kc_row"]
+        w = data["pn_kc_w"] / np.bincount(kc_row, weights=data["pn_kc_w"], minlength=self.n_kc)[kc_row]
+        idx = torch.stack([torch.from_numpy(kc_row).long(), torch.from_numpy(data["pn_kc_col"]).long()])
+        self.w_pn_kc = torch.sparse_coo_tensor(idx, torch.from_numpy(w.astype(np.float32)), (self.n_kc, self.n_pn),
                                                check_invariants=False).coalesce().to_sparse_csr().to(dev)
-        row = torch.from_numpy(data["kc_mbon_row"]).long()
-        self.col = torch.from_numpy(data["kc_mbon_col"]).long().to(dev)
-        self.w0 = torch.from_numpy(data["kc_mbon_w0"]).to(dev)
+        keep = data["mbon_side"][data["kc_mbon_row"]] == "R"
+        row = torch.from_numpy(data["kc_mbon_row"][keep]).long()
+        self.mbon = row.to(dev)
+        self.col = torch.from_numpy(data["kc_mbon_col"][keep]).long().to(dev)
+        self.w0 = torch.from_numpy(data["kc_mbon_w0"][keep]).to(dev)
         self.sign_w0 = torch.from_numpy(data["mbon_sign"])[row].to(dev) * self.w0
         self.pam = torch.from_numpy(data["mbon_pam_frac"])[row].to(dev)
         self.ppl1 = torch.from_numpy(data["mbon_ppl1_frac"])[row].to(dev)

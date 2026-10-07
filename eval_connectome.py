@@ -14,7 +14,7 @@ import torch
 
 import fruit_fly_circuits as fc
 
-from hemibrain_circuits import CX_DEFAULTS, CX_GAIN_KEYS, HemibrainCX, cx_acceptance, load_wiring
+from hemibrain_circuits import CX_DEFAULTS, CX_GAIN_KEYS, HemibrainCX, cx_acceptance, derived_ring_kernel, load_wiring
 
 WIRINGS = ("synthetic", "hemibrain")
 
@@ -134,6 +134,39 @@ def compass(wiring):
     return dark, err[0.0], err[0.02]
 
 
+def derived_ring():
+    """The fallback compass that was measured and rejected: the synthetic ring with its kernel derived from the real
+    wiring. Rotation gain over 200 ticks per speed, and where it settles on a stationary landmark (gain 0.02)."""
+    def brain():
+        b = fc.FlyBrain(device="cpu")
+        b.w_ring = derived_ring_kernel(load_wiring())
+        for _ in range(50):                                    # settle to the kernel's own bump shape
+            r = torch.relu(b.w_ring @ b.bump)
+            b.bump.copy_(r / r.sum())
+        b.inp.zero_()
+        b.tick()
+        return b
+    gains = {}
+    for w in (0.005, 0.01, 0.015, 0.02, 0.05, 0.1, 0.35):
+        b = brain()
+        prev, total = float(b.out[fc.OUT_HEADING]), 0.0
+        for _ in range(200):
+            b.inp[fc.IN_ANGVEL] = w
+            b.tick()
+            total += fc._wrap(float(b.out[fc.OUT_HEADING]) - prev)
+            prev = float(b.out[fc.OUT_HEADING])
+        gains[w] = total / (200 * w)
+    stall = {}
+    for deg in (16.875, 33.75, 90.0):
+        b = brain()
+        b.inp[fc.IN_LANDMARK_HEADING] = math.radians(deg)
+        b.inp[fc.IN_LANDMARK_GAIN] = 0.02
+        for _ in range(1500):
+            b.tick()
+        stall[deg] = math.degrees(float(b.out[fc.OUT_HEADING]))
+    return gains, stall
+
+
 def closed_loop(wiring):
     from agent_loop import Sim
     sim = Sim(wiring=wiring)
@@ -169,6 +202,9 @@ def measure(runs):
     print(f"torch {torch.__version__}, cuda {torch.cuda.is_available()}")
     res = cx_acceptance(lambda: HemibrainCX(load_wiring(), "cpu", **CX_DEFAULTS))
     print("per-neuron compass (closest searched config):", fmt(res))
+    gains, stall = derived_ring()
+    print("derived-kernel ring, rotation gain:", " ".join(f"{w}:{g:.3f}" for w, g in gains.items()))
+    print("derived-kernel ring, landmark at -> settles at (deg):", " ".join(f"{a}->{s:.1f}" for a, s in stall.items()))
     for w in WIRINGS:
         print(f"\n== {w}")
         rnd, near = odor_overlap(w)

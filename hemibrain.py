@@ -95,8 +95,7 @@ def derive(src_dir):
     (pk_row, pk_col), pk_w = zip(*((k, t) for k, t in ((k, pt[t]) for k, t in pn_kc))), list(pn_kc.values())
     km = sorted(kc_mbon.items())
     km_row = np.array([m for (m, _), _ in km], np.int32)
-    km_w0 = np.array([w for _, w in km], np.float32)
-    km_w0 /= np.bincount(km_row, weights=km_w0, minlength=len(mbons))[km_row]   # each MBON's row sums to 1
+    km_w0 = np.array([w for _, w in km], np.float32)          # raw synapse counts: an MBON weighs what it receives
     dan = pam + ppl1
     safe = np.where(dan > 0, dan, 1)
     glom = [_glomeruli(neurons[b][1]) for b in cx]
@@ -134,6 +133,7 @@ def selfcheck(path=DATA_PATH):
     assert count == {"EPG": 46, "EPGt": 4, "PEN1": 20, "PEN2": 22, "Delta7": 42, "PEG": 18}, count
     per_kc = np.bincount(d["pn_kc_row"], minlength=1927)
     assert np.median(per_kc[per_kc > 0]) == 5, np.median(per_kc[per_kc > 0])
+    assert (d["kc_mbon_w0"] >= 1).all() and (d["kc_mbon_w0"] == np.round(d["kc_mbon_w0"])).all()   # raw counts
     right = d["mbon_side"] == "R"                              # the fully traced mushroom body
     sign = dict(zip(d["mbon_types"][right].tolist(), d["mbon_sign"][right].tolist()))
     assert all(sign[m] < 0 for m in ("MBON01", "MBON02", "MBON03")), sign

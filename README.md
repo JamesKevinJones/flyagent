@@ -381,6 +381,12 @@ The rules-only baseline is 4–5 overruns in 1,999.
 (Scheffer et al. 2020, CC BY 4.0). `python hemibrain.py` compiles the public 45.9 MB archive once into
 `data/hemibrain_mb_cx.npz`, a 96 KB file in the repo. The agent loads only that file, so a clone runs offline.
 
+https://github.com/user-attachments/assets/e1d2b548-6bdb-4b04-be34-0a8a48803474
+
+*24 seconds of `python serve.py --wiring hemibrain`, recorded against the real server: default foraging to the banana
+(the real mushroom body learns it), "avoid the smell and head north", a predator (FLEE and the escape jump), "go home",
+then "rest". Source file: [docs/media/hemibrain.mp4](docs/media/hemibrain.mp4).*
+
 **What it uses:**
 - **Inputs:** 63 real projection-neuron types (61 glomeruli) feeding the 1,927 real Kenyon cells of the right mushroom
   body. Each KC keeps its real partners and their relative synapse counts, normalised by its total input.

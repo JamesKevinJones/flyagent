@@ -24,7 +24,7 @@ goal page.
 - A fresh-reviewer pass found 4 Important issues, all fixed with tests. The 10 deferred minors are listed below.
 - Spec and plan: `docs/superpowers/specs/2026-10-06-precompiled-system1-design.md`, `docs/superpowers/plans/2026-10-06-precompiled-system1.md`.
 
-**Real wiring (sub-project 3 of 3)** is built on branch `feat/hemibrain-wiring`, final-reviewed and fixed; not merged yet:
+**Real wiring (sub-project 3 of 3)** is merged into `main` (2026-10-07), final-reviewed and fixed:
 - `--wiring hemibrain` runs the mushroom body on Janelia hemibrain v1.2 wiring (CC BY) from the committed 96 KB
   `data/hemibrain_mb_cx.npz`; `hemibrain.py` rebuilds it.
 - The real MB has 63 PN types and 1,927 KCs, with per-KC normalised input. Valence comes from the 44 right-side
@@ -38,11 +38,11 @@ goal page.
 
 ## In progress
 
-- Merging `feat/hemibrain-wiring`. Nothing half-done in the code.
+- Nothing half-done.
 
 ## The exact next step
 
-Merge `feat/hemibrain-wiring`, then run `/security-review` before pushing. Kevin sets the `CLAUDE_API_KEY` CI secret (`gh secret set CLAUDE_API_KEY --repo JamesKevinJones/flyagent`).
+Push `main` after `/security-review` on the pending diff. Kevin sets the `CLAUDE_API_KEY` CI secret (`gh secret set CLAUDE_API_KEY --repo JamesKevinJones/flyagent`).
 All three sub-projects are then done. Possible follow-ups (not planned): a per-neuron compass with faster dynamics
 (e.g. a shorter time constant or the ring neurons' input), the other hemisphere, FlyWire if its licence suits.
 

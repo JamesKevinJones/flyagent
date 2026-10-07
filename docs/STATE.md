@@ -24,7 +24,8 @@ goal page.
 - A fresh-reviewer pass found 4 Important issues, all fixed with tests. The 10 deferred minors are listed below.
 - Spec and plan: `docs/superpowers/specs/2026-10-06-precompiled-system1-design.md`, `docs/superpowers/plans/2026-10-06-precompiled-system1.md`.
 
-**Real wiring (sub-project 3 of 3)** is merged into `main` (2026-10-07), final-reviewed and fixed:
+**Real wiring (sub-project 3 of 3)** is merged and pushed (2026-10-07, `5c65705`), final-reviewed and fixed. The
+security review of the pushed diff found nothing:
 - `--wiring hemibrain` runs the mushroom body on Janelia hemibrain v1.2 wiring (CC BY) from the committed 96 KB
   `data/hemibrain_mb_cx.npz`; `hemibrain.py` rebuilds it.
 - The real MB has 63 PN types and 1,927 KCs, with per-KC normalised input. Valence comes from the 44 right-side
@@ -42,9 +43,16 @@ goal page.
 
 ## The exact next step
 
-Push `main` after `/security-review` on the pending diff. Kevin sets the `CLAUDE_API_KEY` CI secret (`gh secret set CLAUDE_API_KEY --repo JamesKevinJones/flyagent`).
-All three sub-projects are then done. Possible follow-ups (not planned): a per-neuron compass with faster dynamics
-(e.g. a shorter time constant or the ring neurons' input), the other hemisphere, FlyWire if its licence suits.
+All three sub-projects are done and pushed. Two steps remain:
+1. Kevin sets the `CLAUDE_API_KEY` CI secret (`gh secret set CLAUDE_API_KEY --repo JamesKevinJones/flyagent`), so the
+   security workflow can run.
+2. Optionally, pick a follow-up. None is planned.
+   - **Faster per-neuron compass:** a shorter time constant, no rate clamp, or the ring neurons' input. The searched
+     model maxes out at about 0.016 rad/tick.
+   - **The other hemisphere.**
+   - **FlyWire,** if its CC BY-NC licence suits.
+   - **README 3g clip:** a recording of `serve.py --wiring hemibrain`.
+   - **The deferred minors below.**
 
 Deferred minors from the sub-project 3 review:
 - `fetch` has no sha256 pin, and download and extract aren't atomic.

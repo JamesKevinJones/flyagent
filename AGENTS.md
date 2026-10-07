@@ -20,7 +20,7 @@ them up. README.md holds the measured tradeoff matrix and tuning guide.
 - `system1_engine.py`: `describe()` (circuit state to words), backends, precompiled tables (file, lookup, filler, `--compile`)
 - `tables/`: compiled model answers, gitignored; the measured Laya and Qwen3-4B tables are force-added
 - `hemibrain.py`: compiles `data/hemibrain_mb_cx.npz` from the Janelia hemibrain v1.2 archive (CC BY; `data/DATA_LICENSE`). Runtime never imports it
-- `hemibrain_circuits.py`: `--wiring hemibrain` circuits: real mushroom body (`HemibrainMB`), per-neuron compass (`HemibrainCX`, measured only) and the derived ring kernel the agent uses
+- `hemibrain_circuits.py`: `--wiring hemibrain` mushroom body (`HemibrainMB`); the per-neuron compass (`HemibrainCX`) and derived ring kernel are measured only (both failed; the compass stays the synthetic ring)
 - `agent_loop.py`: `Sim` (one tick of work, goal compilation), toy `World`, the CLI's deadline loop, pinning, stats
 - `goals.py`: `Goal`, the parser, LLM interpretation (`interpret`, `make_llm`)
 - `serve.py` + `web/index.html`: the local goal page (stdlib server, SSE, one static file)

@@ -24,26 +24,36 @@ goal page.
 - A fresh-reviewer pass found 4 Important issues, all fixed with tests. The 10 deferred minors are listed below.
 - Spec and plan: `docs/superpowers/specs/2026-10-06-precompiled-system1-design.md`, `docs/superpowers/plans/2026-10-06-precompiled-system1.md`.
 
-**Real wiring (sub-project 3 of 3)** is built on branch `feat/hemibrain-wiring`, not merged yet:
-- `--wiring hemibrain` runs the mushroom body and compass on Janelia hemibrain v1.2 wiring (CC BY), from the committed
-  102 KB `data/hemibrain_mb_cx.npz`; `hemibrain.py` rebuilds it.
-- The real mushroom body works (valence 0.224 / −0.165) but separates unrelated odors worse (KC overlap 0.227 vs 0.033).
-- The per-neuron compass failed rotation gain (it tops out at about 60°/s), so the agent uses the spec's fallback, a
-  ring with a kernel derived from the real wiring. That ring misses rotation gain only at the slowest speed (0.879
-  vs 0.9).
-- The default stays synthetic. Numbers are in README 3g and `docs/eval-connectome-2026-10-06.txt`.
-- Spec and plan: `docs/superpowers/specs/2026-10-06-hemibrain-wiring-design.md`,
+**Real wiring (sub-project 3 of 3)** is built on branch `feat/hemibrain-wiring`, final-reviewed and fixed; not merged yet:
+- `--wiring hemibrain` runs the mushroom body on Janelia hemibrain v1.2 wiring (CC BY) from the committed 96 KB
+  `data/hemibrain_mb_cx.npz`; `hemibrain.py` rebuilds it.
+- The real MB has 63 PN types and 1,927 KCs, with per-KC normalised input. Valence comes from the 44 right-side
+  MBONs, count-weighted, with signs derived from their dopamine input. Learning and odor coding are now close to
+  synthetic.
+- Both connectome compasses failed and are reported in README 3g: the per-neuron model maxes out at about 60°/s, and
+  the derived-kernel ring has a dead zone below 0.012 rad/tick. The compass stays the synthetic ring (Kevin's call,
+  2026-10-07). The default wiring stays synthetic.
+- Spec (with its 2026-10-07 amendments) and plan: `docs/superpowers/specs/2026-10-06-hemibrain-wiring-design.md`,
   `docs/superpowers/plans/2026-10-06-hemibrain-wiring.md`.
 
 ## In progress
 
-- Finishing `feat/hemibrain-wiring` (final review, then merge). Nothing half-done in the code.
+- Merging `feat/hemibrain-wiring`. Nothing half-done in the code.
 
 ## The exact next step
 
-Merge `feat/hemibrain-wiring` after its final review. Before pushing, run `/security-review`. Kevin sets the `CLAUDE_API_KEY` CI secret (`gh secret set CLAUDE_API_KEY --repo JamesKevinJones/flyagent`).
+Merge `feat/hemibrain-wiring`, then run `/security-review` before pushing. Kevin sets the `CLAUDE_API_KEY` CI secret (`gh secret set CLAUDE_API_KEY --repo JamesKevinJones/flyagent`).
 All three sub-projects are then done. Possible follow-ups (not planned): a per-neuron compass with faster dynamics
 (e.g. a shorter time constant or the ring neurons' input), the other hemisphere, FlyWire if its licence suits.
+
+Deferred minors from the sub-project 3 review:
+- `fetch` has no sha256 pin, and download and extract aren't atomic.
+- `hemibrain.py`'s `DATA_PATH` is relative to the working directory.
+- `vram_mb()` misses the KC→MBON tensors.
+- `HemibrainMB` ignores `FlyBrain.kc_novelty_decay`.
+- The angle-map candidate search isn't committed.
+- `eval_connectome` reports tick period, not tick compute.
+- `eval_connectome` has no `--wiring` flag; it always runs both.
 
 Deferred minors from the sub-project 2 review:
 - `close()` blocks on an in-flight chunk (up to about 160 s for an LLM) and discards it.

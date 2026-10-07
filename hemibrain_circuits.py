@@ -175,15 +175,16 @@ def cx_acceptance(make_cx):
 
 # The closest per-neuron configuration found (eval_connectome.py --tune-cx, then the edge-extended ranges in
 # docs/eval-connectome-2026-10-06.txt, 2026-10-06). It forms one bump (FWHM 117 deg) and holds it (~3 deg/s drift),
-# but fails the rotation-gain test: the bump moves at most ~0.016 rad/tick (~60 deg/s) whatever the drive, so the agent
-# uses derived_ring_kernel instead. Kept so the measurement can be re-run.
+# but fails the rotation-gain test: within the searched model (rates clamped at 1, tau >= 0.5 tick) the bump moves at
+# most ~0.016 rad/tick (~60 deg/s). The agent keeps the synthetic ring (README 3g). Kept so the measurement can be re-run.
 CX_DEFAULTS = {"gains": {"EPG>Delta7": 1.0, "Delta7>all": 0.5, "EPG>PEN": 1.0, "PEN>EPG": 2.0, "EPG>PEG": 0.0,
                          "PEG>EPG": 1.0, "EPG>EPG": 1.0},
                "av_gain": -64.0, "landmark_gain_scale": 5.0, "substeps": 32, "tau_ticks": 1.0}
 
 
 def derived_ring_kernel(data, n_wedges=16):
-    """The fallback compass kernel: effective EPG->EPG coupling from the real wiring (direct, plus the PEN and PEG
+    """The spec's fallback compass kernel, measured and rejected (it drops every turn under ~0.012 rad/tick; README 3g,
+    eval_connectome.derived_ring). Effective EPG->EPG coupling from the real wiring (direct, plus the PEN and PEG
     loops, minus the Delta7 loop; each neuron's input as fractions of its total), averaged into a circulant profile
     over the 8 EPG tiles, symmetrised, resampled to n_wedges and made zero-mean like the synthetic cosine kernel.
     The PEN shift itself stays the synthetic ring's exact P-EN interpolation."""

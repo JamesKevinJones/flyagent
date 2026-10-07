@@ -1,18 +1,20 @@
 torch 2.14.0+cu130, cuda True
 per-neuron compass (closest searched config): n_peaks=1 fwhm_deg=117.000 drift_deg_per_s=3.530 gain_0.02=0.812 gain_0.1=0.162 gain_0.35=0.046 passed=False
+derived-kernel ring, rotation gain: 0.005:0.044 0.01:0.044 0.015:0.784 0.02:0.880 0.05:0.970 0.1:0.988 0.35:1.004
+derived-kernel ring, landmark at -> settles at (deg): 16.875->2.3 33.75->4.4 90.0->70.6
 
 == synthetic
 odor overlap   unrelated 0.033  one glomerulus changed 0.856  (Jaccard of KC codes, n=50)
 learning       valence reward 0.050  punish -0.050  similar odor after reward 0.043
 compass        dark drift 0.00 deg/s  biased gyro error p50/final: no landmark 0.500/1.000 rad, with landmark 0.025/0.025 rad
 closed loop    {'FORAGE': 1847, 'FLEE': 25, 'ORIENT': 124, 'IDLE': 4}  rewards ['banana', 'geosmin']  jumps 22
-tick (cpu)     p50 15.000 p99 15.007 overruns 15 | p50 15.000 p99 15.111 overruns 14 | p50 15.000 p99 15.249 overruns 7
-tick (cuda)     p50 15.000 p99 17.478 overruns 31 | p50 15.000 p99 15.225 overruns 14 | p50 15.000 p99 15.185 overruns 13
+tick (cpu)     p50 15.000 p99 15.580 overruns 7 | p50 15.000 p99 15.043 overruns 0 | p50 15.000 p99 15.078 overruns 2
+tick (cuda)     p50 15.000 p99 15.193 overruns 7 | p50 15.000 p99 15.078 overruns 1 | p50 15.000 p99 15.461 overruns 12
 
 == hemibrain
-odor overlap   unrelated 0.227  one glomerulus changed 0.934  (Jaccard of KC codes, n=50)
-learning       valence reward 0.224  punish -0.165  similar odor after reward 0.170
-compass        dark drift 0.00 deg/s  biased gyro error p50/final: no landmark 0.098/0.071 rad, with landmark 0.043/0.083 rad
+odor overlap   unrelated 0.054  one glomerulus changed 0.905  (Jaccard of KC codes, n=50)
+learning       valence reward 0.043  punish -0.050  similar odor after reward 0.039
+compass        dark drift 0.00 deg/s  biased gyro error p50/final: no landmark 0.500/1.000 rad, with landmark 0.025/0.025 rad
 closed loop    {'FORAGE': 1974, 'FLEE': 25, 'ORIENT': 0, 'IDLE': 1}  rewards ['banana']  jumps 22
-tick (cpu)     p50 15.000 p99 15.000 overruns 2 | p50 15.000 p99 15.058 overruns 11 | p50 15.000 p99 15.000 overruns 6
-tick (cuda)     p50 15.000 p99 16.024 overruns 21 | p50 15.000 p99 15.652 overruns 19 | p50 15.000 p99 15.220 overruns 13
+tick (cpu)     p50 15.000 p99 15.228 overruns 2 | p50 15.000 p99 15.323 overruns 5 | p50 15.000 p99 15.120 overruns 0
+tick (cuda)     p50 15.000 p99 15.186 overruns 3 | p50 15.000 p99 15.318 overruns 5 | p50 15.000 p99 15.374 overruns 12

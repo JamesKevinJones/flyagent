@@ -31,7 +31,7 @@ the live arena, compass and behaviour bars. Interpretation runs on a built-in pa
 model. Set `GEMINI_API_KEY`, or `LLM_BASE_URL` + `LLM_MODEL` (+ `LLM_API_KEY`), to add an LLM on top
 for phrasings the parser can't read. Measured results are in section 3e.
 
-`python serve.py --wiring hemibrain` runs the same fly on wiring from a real fly brain (3g).
+`python serve.py --wiring hemibrain` runs the same fly with a mushroom body wired from a real fly brain (3g).
 `python serve.py --backends laya` swaps the rule table for Laya's precompiled answers. The table ships in
 `tables/`, so this works on the CPU build with no model installed (3f). The Qwen3-4B table ships too; it's
 found by `--backends llm` with `LLM_BASE_URL=http://127.0.0.1:11434/v1` and
@@ -377,66 +377,76 @@ The rules-only baseline is 4–5 overruns in 1,999.
 
 ### 3g. Real wiring from the hemibrain connectome
 
-`--wiring hemibrain` swaps the hand-built mushroom body and compass for wiring measured in a real fly brain:
-Janelia's hemibrain v1.2 (Scheffer et al. 2020, CC BY 4.0). `python hemibrain.py` compiles the public 45.9 MB
-archive once into `data/hemibrain_mb_cx.npz`, a 102 KB file in the repo. The agent loads only that file, so a clone
-runs offline.
+`--wiring hemibrain` runs the mushroom body on wiring measured in a real fly brain: Janelia's hemibrain v1.2
+(Scheffer et al. 2020, CC BY 4.0). `python hemibrain.py` compiles the public 45.9 MB archive once into
+`data/hemibrain_mb_cx.npz`, a 96 KB file in the repo. The agent loads only that file, so a clone runs offline.
 
-What it uses:
-- **Inputs:** 63 real glomerulus types feeding 1,927 real Kenyon cells, with their synapse counts as weights.
-- **Learning:** the real KC→MBON synapses onto 68 MBONs. Each MBON's valence sign comes from its measured dopamine
-  input, `(PPL1 − PAM)/(PPL1 + PAM)`, following the published rule (Aso et al. 2014) that reward dopamine depresses
-  avoidance outputs. The derived signs match the literature where it's well established: MBON01–03 avoidance, MBON11
-  and 14 approach.
-- **Compass:** the 152 real EPG, PEN, Δ7 and PEG neurons. Their bridge-to-compass angle map was chosen from the
-  data: it's the one under which the real PEN→EPG wiring shifts the bump by one wedge in opposite directions per
-  side (+22.4° / −22.3°).
+**What it uses:**
+- **Inputs:** 63 real projection-neuron types (61 glomeruli) feeding the 1,927 real Kenyon cells of the right mushroom
+  body. Each KC keeps its real partners and their relative synapse counts, normalised by its total input.
+- **Learning:** the real KC→MBON synapses onto the 44 MBONs of the fully traced right side, each weighted by its
+  synapse count.
+- **Valence signs:** each MBON's sign comes from its measured dopamine input, `(PPL1 − PAM)/(PPL1 + PAM)`, following
+  the published rule (Aso et al. 2014) that reward dopamine depresses avoidance outputs. On the right side the
+  derived signs match the literature where it's well established: MBON01–03 avoidance, MBON11 and 14 approach.
+- **Not used for the compass.** Two compasses built from the connectome were measured and rejected (below), so the
+  compass stays the exact synthetic ring.
 
 The numbers below are from `eval_connectome.py --runs 3`; the full output is in
 `docs/eval-connectome-2026-10-06.txt`.
 
 | | Synthetic | Hemibrain |
 |---|---|---|
-| KC-code overlap, unrelated odors (lower separates better) | **0.033** | 0.227 |
-| KC-code overlap, one glomerulus changed (higher generalises more) | 0.856 | **0.934** |
-| Valence after one reward / one punishment | 0.050 / −0.050 | 0.224 / −0.165 |
-| Valence on a similar odor after the reward | 0.043 | 0.170 |
-| Heading error p50, biased gyro, no landmark | 0.500 rad | **0.098 rad** |
-| Heading error p50, biased gyro, with landmark | **0.025 rad** | 0.043 rad |
+| KC-code overlap, unrelated odors (lower separates better) | 0.033 | 0.054 |
+| KC-code overlap, one input slot changed (higher generalises more) | 0.856 | 0.905 |
+| Valence after one reward / one punishment | 0.050 / −0.050 | 0.043 / −0.050 |
+| Valence on a similar odor after the reward | 0.043 | 0.039 |
 | Closed loop: FORAGE / FLEE / ORIENT / IDLE ticks | 1847 / 25 / 124 / 4 | 1974 / 25 / 0 / 1 |
 | Rewards touched, escape jumps | banana + geosmin, 22 | banana only, 22 |
-| Tick period p99, CPU (3 runs) | 15.01–15.25 ms | 15.00–15.06 ms |
-| Tick period p99, CUDA graph (3 runs) | 15.19–17.48 ms | 15.22–16.02 ms |
+| Tick period p99, CPU (3 runs) | 15.04–15.58 ms | 15.12–15.32 ms |
+| Tick period p99, CUDA graph (3 runs) | 15.08–15.46 ms | 15.19–15.37 ms |
 
-**The compass: one rate unit per real neuron forms a bump, but can't turn fast enough.**
-- **What passes.** With gains tuned over two grid searches (`eval_connectome.py --tune-cx`, plus an extended
-  range), the per-neuron model forms one bump 117° wide and holds it in darkness (3.5°/s drift).
-- **What fails.** Its rotation gain is 0.81 at 0.02 rad per tick, 0.16 at 0.1 and 0.05 at 0.35. The bump never moves
-  faster than about 0.016 rad per tick (about 60°/s), however hard the PENs are driven.
-- **What the agent uses instead,** as the spec planned: today's 16-wedge ring with its kernel derived from the same
-  wiring. That kernel is direct EPG→EPG, plus the PEN and PEG loops, minus the Δ7 loop. It has local excitation and
-  broad inhibition, narrower than a cosine.
-- **What the derived ring costs.** It tracks medium and fast turns exactly (rotation gain 0.987 and 1.004), but its
-  narrow bump pins to wedges:
-  - slow turns under-rotate by 12% (gain 0.879, just under the spec's 0.9);
-  - a tiny gyro bias never accumulates, which is why its no-landmark error is lower than synthetic's;
-  - it settles about 0.02 rad off a landmark that falls between wedges.
+**Raw synapse counts didn't work as-is.** KCs differ about 4× in total input (10th percentile 48 synapses, 90th 178),
+so with raw counts the same high-input KCs won the 5% k-winners-take-all for every odor:
+- unrelated odors shared 23% of their code (overlap 0.227);
+- one reward made every odor read "rewarded" to System 1.
 
-  With the landmark it holds 0.043 rad, inside the spec's 0.05.
+Normalising each KC's input removed both, and unrelated odors now pick up at most 0.010 valence after a reward.
+Weighting MBONs by synapse count, and dropping the 24 left-side copies the hemibrain volume cuts off, keeps tiny or
+truncated MBONs from steering valence. One of those copies, MBON11_L, has the wrong sign.
 
-**What changed in behaviour.** Real PN→KC wiring is far less uniform than random fan-in. A few glomeruli dominate the
-synapse counts, so unrelated odors share about a quarter of their KC code, and learning generalises more to similar
-odors. In the closed loop, the hemibrain fly never touches geosmin and never enters ORIENT: it forages for the whole
-run. Tick timing is unchanged on both devices.
+**The compass on real wiring: two attempts, both rejected.**
+1. **One rate unit per real neuron.** The 152 EPG, PEN, Δ7 and PEG neurons, with a bridge-to-compass angle map
+   selected from an assumed family (45° per glomerulus): the one under which the real PEN→EPG wiring shifts the bump
+   by one wedge in opposite directions per side (+22.4° / −22.3°).
+   - Tuned over two grid searches (`eval_connectome.py --tune-cx`, plus an extended range), it forms one bump 117°
+     wide and holds it in darkness (3.5°/s drift).
+   - It fails rotation: gain 0.81 at 0.02 rad per tick, 0.16 at 0.1, 0.05 at 0.35.
+   - Within the searched model (rates saturating at 1, time constant ≥ half a tick), the bump never moves faster than
+     about 0.016 rad per tick (about 60°/s).
+2. **The ring with a kernel derived from the same wiring.** The kernel is direct EPG→EPG, plus the PEN and PEG loops,
+   minus the Δ7 loop. Its bump is narrower than a cosine, and it snaps to the 16 wedges:
+   - turns slower than about 0.012 rad per tick (45°/s) are dropped entirely: rotation gain 0.044 at 0.005 and
+     0.01, 0.78 at 0.015, 0.88 at 0.02, 0.99 at 0.1;
+   - with the default landmark gain it stalls short of landmarks between wedges: 33.75° settles at 4.4°, 90° at
+     70.6°.
 
-**The default stays `synthetic`.** Hemibrain wiring isn't better on every measure (odor separation and compass
-resolution are worse), so it stays an opt-in.
+   Gentle curves would vanish from the heading and the home vector, so it isn't used.
+
+**What changed in behaviour.** Learning and odor coding are now close to synthetic. In the closed loop, the hemibrain
+fly forages for the whole run, never touches geosmin and never enters ORIENT. Tick timing is unchanged on both
+devices.
+
+**The default stays `synthetic`.** The real mushroom body is at least as good on learning but separates unrelated
+odors slightly worse (0.054 vs 0.033), so it stays an opt-in.
 
 **Not modelled:**
 - the other hemisphere;
-- the 257 ring neurons and PFL3, per neuron;
+- the ring neurons and PFL3;
 - the dopamine neurons' own dynamics;
-- neurotransmitter-specific synapse strengths beyond Δ7's sign.
+- neurotransmitter-specific synapse strengths.
+
+Learning only depresses synapses, so a reward then a punishment doesn't return to neutral.
 
 ---
 

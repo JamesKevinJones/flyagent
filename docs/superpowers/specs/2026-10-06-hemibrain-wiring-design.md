@@ -199,3 +199,21 @@ pandas is not a dependency.
 - **The bridge-to-ellipsoid-body angle map is published data,** not derived from this export.
 - **Uniform dopamine input.** Dopamine is one world signal, split by each MBON's PAM/PPL1 fraction; the 322 DANs
   aren't simulated.
+
+## Amendments (2026-10-07, after the final review; Kevin's decisions)
+
+- **Compass:** `--wiring hemibrain` keeps the exact synthetic ring. Both connectome compasses were built and measured,
+  and both failed test 3:
+  - **Per-neuron model:** the bump moves at most about 0.016 rad/tick.
+  - **Derived-kernel ring (Section 3's fallback):** no rotation below about 0.012 rad/tick (gain 0.044), and it
+    stalls short of off-wedge landmarks.
+  
+  Both are reported in README 3g; neither runs in the agent.
+- **KC input** is normalised by each KC's total synapse count. That replaces Section 2's raw counts. KCs differ about
+  4× in total input, so raw counts let the same KCs win for every odor, and one reward made every odor read
+  "rewarded".
+- **Valence** uses the right-side MBONs only (the fully traced mushroom body; left-side copies are cut at the volume's
+  edge), each weighted by its raw synapse count. That replaces "68 MBONs, each row summing to 1".
+- **Learning-rate target.** One pairing must read beyond `describe()`'s ±0.02 with a 2× margin (±0.04), while
+  unrelated odors stay under 0.02. That replaces ±0.1, which can't coexist with the no-spill requirement (spill runs
+  at about 24% of the rewarded valence).
